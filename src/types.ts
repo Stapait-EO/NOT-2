@@ -47,15 +47,36 @@ export interface Product {
   avgQty3x?: number;
 }
 
-export type UserRole = 'admin' | 'vendedor' | 'almoxarife';
+export type UserRole = 'admin' | 'vendedor' | 'almoxarife' | 'user' | string;
 
 export interface UserAccount {
   id: string;
   username: string;
   fullName: string;
-  passwordHash: string; // Simplified password string for local demo persistence
-  createdAt: string;
+  email?: string;
+  passwordHash?: string;
+  createdAt?: string;
   role: UserRole;
+  avatar?: string;
+  ssoId?: string;
+  portalAppId?: string;
+  allowedApps?: string[];
+}
+
+export interface SSOValidateResponse {
+  valid: boolean;
+  user?: {
+    id?: string;
+    name?: string;
+    fullName?: string;
+    username?: string;
+    email?: string;
+    role?: string;
+    avatar?: string;
+    [key: string]: any;
+  };
+  error?: string;
+  message?: string;
 }
 
 export interface WebhookConfig {

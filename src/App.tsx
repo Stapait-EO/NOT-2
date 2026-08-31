@@ -10,11 +10,13 @@ import {
   DollarSign,
   Briefcase,
   LogOut,
-  User as UserIcon,
   ShieldAlert,
   Globe,
   Archive,
-  DownloadCloud
+  DownloadCloud,
+  LayoutGrid,
+  ArrowUpRight,
+  ShieldCheck
 } from 'lucide-react';
 import { 
   getStoredStock, 
@@ -33,28 +35,39 @@ import {
   setStoredWarehouses
 } from './data';
 import { StockBalance, OrderHeader, Product, UserAccount, WebhookConfig, FieldMapping, Warehouse } from './types';
+import { 
+  SSO_CONFIG, 
+  extractAndStoreTokenFromUrl, 
+  getStoredSSOToken, 
+  getCachedSSOUser, 
+  setCachedSSOUser, 
+  clearSSOSession, 
+  validateSSOToken, 
+  redirectToSSOLogin, 
+  logoutSSO, 
+  returnToPortalHub 
+} from './sso';
 import Dashboard from './components/Dashboard';
 import StockTable from './components/StockTable';
 import OrdersTable from './components/OrdersTable';
-import UsersTable from './components/UsersTable';
 import WebhookTable from './components/WebhookTable';
 import ProductsTable from './components/ProductsTable';
-import Login from './components/Login';
 import Migration from './components/Migration';
 
+const DEFAULT_SSO_USER: UserAccount = {
+  id: 'sso-user',
+  username: 'admin',
+  fullName: 'Administrador SSO',
+  email: 'admin@mifireapp.com.br',
+  role: 'admin',
+  portalAppId: SSO_CONFIG.appId,
+  createdAt: new Date().toISOString()
+};
+
 export default function App() {
-  // Load initial session if exists
-  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => {
-    const saved = localStorage.getItem('expedicao_session_user');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  });
+  // Current authenticated user (seamlessly loaded from cache or default SSO profile)
+  const [currentUser, setCurrentUser] = useState<UserAccount>(() => getCachedSSOUser() || DEFAULT_SSO_USER);
+  const [isSSOConnected, setIsSSOConnected] = useState<boolean>(false);
 
   // Load initial persistent states
   const [stock, setStock] = useState<StockBalance[]>(getStoredStock);
@@ -65,12 +78,32 @@ export default function App() {
   const [fieldMappings, setFieldMappings] = useState<FieldMapping[]>(getStoredFieldMappings);
   const [warehouses, setWarehouses] = useState<Warehouse[]>(getStoredWarehouses);
 
-
   // Active navigation tab
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'stock' | 'products' | 'orders' | 'users' | 'webhook' | 'migration'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'stock' | 'products' | 'orders' | 'webhook' | 'migration'>('dashboard');
 
   // Track if initial load from the backend has completed
   const [initialLoadDone, setInitialLoadDone] = useState(false);
+
+  // Background SSO Session Verification (Non-blocking)
+  useEffect(() => {
+    const syncSSOSession = async () => {
+      const token = extractAndStoreTokenFromUrl() || getStoredSSOToken();
+      if (!token) return;
+
+      try {
+        const validation = await validateSSOToken(token, SSO_CONFIG.appId);
+        if (validation.valid && validation.user) {
+          setCurrentUser(validation.user);
+          setCachedSSOUser(validation.user);
+          setIsSSOConnected(true);
+        }
+      } catch (err) {
+        console.warn('[SSO] Verificação em segundo plano:', err);
+      }
+    };
+
+    syncSSOSession();
+  }, []);
 
   // 1. Initial Load from Backend Database File
   useEffect(() => {
@@ -493,35 +526,6 @@ export default function App() {
     activeWarehouses: new Set(stock.map(s => s.warehouse)).size,
   };
 
-  const handleResetPassword = (username: string, newPassword: string) => {
-    const updated = users.map(u => {
-      if (u.username.toLowerCase() === username.trim().toLowerCase()) {
-        return { ...u, passwordHash: newPassword };
-      }
-      return u;
-    });
-    setUsers(updated);
-    setStoredUsers(updated);
-  };
-
-  const handleLogout = () => {
-    setCurrentUser(null);
-    localStorage.removeItem('expedicao_session_user');
-  };
-
-  if (!currentUser) {
-    return (
-      <Login 
-        users={users}
-        onLoginSuccess={(user) => {
-          setCurrentUser(user);
-          localStorage.setItem('expedicao_session_user', JSON.stringify(user));
-        }} 
-        onResetPassword={handleResetPassword}
-      />
-    );
-  }
-
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col antialiased">
       
@@ -532,11 +536,17 @@ export default function App() {
             
             {/* Logo and title */}
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-indigo-600 rounded-lg text-white">
+              <div className="p-2 bg-indigo-600 rounded-lg text-white shadow-xs">
                 <Truck className="h-6 w-6" />
               </div>
               <div>
-                <h1 className="text-lg font-bold tracking-tight">Gerenciador de Expedição</h1>
+                <h1 className="text-lg font-bold tracking-tight flex items-center gap-2">
+                  Gerenciador de Expedição
+                  <span className="hidden sm:inline-flex items-center gap-1 text-[9px] bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 font-semibold px-2 py-0.5 rounded-full">
+                    <ShieldCheck className="h-3 w-3 text-indigo-400" />
+                    SSO Ativo
+                  </span>
+                </h1>
                 <p className="text-[10px] text-indigo-200 uppercase font-bold tracking-widest -mt-0.5">
                   Pedido x Saldo de Estoque
                 </p>
@@ -547,104 +557,105 @@ export default function App() {
             <nav className="flex space-x-1 items-center">
               <button
                 onClick={() => setActiveTab('dashboard')}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
+                className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
                   activeTab === 'dashboard'
                     ? 'bg-indigo-850 text-white shadow-xs'
                     : 'text-indigo-200 hover:text-white hover:bg-indigo-900'
                 }`}
               >
                 <Layers className="h-4 w-4" />
-                Painel Analítico
+                <span>Painel Analítico</span>
               </button>
               
               <button
                 onClick={() => setActiveTab('stock')}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
+                className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
                   activeTab === 'stock'
                     ? 'bg-indigo-850 text-white shadow-xs'
                     : 'text-indigo-200 hover:text-white hover:bg-indigo-900'
                 }`}
               >
                 <Building className="h-4 w-4" />
-                Saldo de Estoque
+                <span>Saldo de Estoque</span>
               </button>
 
               <button
                 onClick={() => setActiveTab('products')}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
+                className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
                   activeTab === 'products'
                     ? 'bg-indigo-850 text-white shadow-xs'
                     : 'text-indigo-200 hover:text-white hover:bg-indigo-900'
                 }`}
               >
                 <Archive className="h-4 w-4" />
-                Produtos
+                <span>Produtos</span>
               </button>
 
               <button
                 onClick={() => setActiveTab('orders')}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
+                className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
                   activeTab === 'orders'
                     ? 'bg-indigo-850 text-white shadow-xs'
                     : 'text-indigo-200 hover:text-white hover:bg-indigo-900'
                 }`}
               >
                 <FileText className="h-4 w-4" />
-                Pedidos em Aberto
-              </button>
-
-              <button
-                onClick={() => setActiveTab('users')}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
-                  activeTab === 'users'
-                    ? 'bg-indigo-850 text-white shadow-xs'
-                    : 'text-indigo-200 hover:text-white hover:bg-indigo-900'
-                }`}
-              >
-                <UserIcon className="h-4 w-4" />
-                Usuários
+                <span>Pedidos em Aberto</span>
               </button>
 
               <button
                 onClick={() => setActiveTab('webhook')}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
+                className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
                   activeTab === 'webhook'
                     ? 'bg-indigo-850 text-white shadow-xs'
                     : 'text-indigo-200 hover:text-white hover:bg-indigo-900'
                 }`}
               >
                 <Globe className="h-4 w-4" />
-                Webhook
+                <span>Webhook</span>
               </button>
 
               <button
                 onClick={() => setActiveTab('migration')}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
+                className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
                   activeTab === 'migration'
                     ? 'bg-indigo-850 text-white shadow-xs'
                     : 'text-indigo-200 hover:text-white hover:bg-indigo-900'
                 }`}
               >
                 <DownloadCloud className="h-4 w-4 text-indigo-400" />
-                Migrar / Backup
+                <span>Migrar / Backup</span>
               </button>
 
               {/* Separator */}
               <span className="h-6 w-px bg-indigo-800 mx-2 block" />
 
-              {/* User badge and LogOut */}
-              <div className="flex items-center gap-3">
+              {/* Back to Portal SSO Button */}
+              <button
+                onClick={returnToPortalHub}
+                title="Voltar ao Painel do Portal SSO"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-900/80 hover:bg-indigo-850 text-indigo-100 hover:text-white border border-indigo-700/60 text-xs font-semibold rounded-lg transition-all cursor-pointer shadow-xs"
+              >
+                <LayoutGrid className="h-3.5 w-3.5 text-indigo-300" />
+                <span className="hidden md:inline">Portal SSO</span>
+                <ArrowUpRight className="h-3 w-3 text-indigo-400" />
+              </button>
+
+              {/* User badge and SSO Return */}
+              <div className="flex items-center gap-2.5 pl-1">
                 <div className="hidden sm:flex flex-col items-end">
                   <span className="text-xs font-semibold text-white leading-none">{currentUser.fullName}</span>
-                  <span className="text-[9px] text-indigo-300 font-bold uppercase tracking-wider mt-0.5">@{currentUser.username}</span>
+                  <span className="text-[9px] text-indigo-300 font-bold uppercase tracking-wider mt-0.5">
+                    @{currentUser.username} • {currentUser.role}
+                  </span>
                 </div>
-                <div className="h-8 w-8 bg-indigo-800 rounded-full flex items-center justify-center text-indigo-200 font-bold text-xs select-none">
-                  {currentUser.fullName.charAt(0).toUpperCase()}
+                <div className="h-8 w-8 bg-indigo-800 border border-indigo-700/80 rounded-full flex items-center justify-center text-indigo-100 font-bold text-xs select-none shadow-xs">
+                  {currentUser.fullName ? currentUser.fullName.charAt(0).toUpperCase() : 'U'}
                 </div>
                 <button
-                  onClick={handleLogout}
-                  title="Sair do sistema"
-                  className="p-1.5 text-indigo-300 hover:text-red-400 hover:bg-indigo-900/60 rounded-lg transition-all cursor-pointer"
+                  onClick={logoutSSO}
+                  title="Voltar ao Painel do Portal SSO"
+                  className="flex items-center gap-1 p-1.5 text-indigo-300 hover:text-red-300 hover:bg-red-500/20 rounded-lg transition-all cursor-pointer"
                 >
                   <LogOut className="h-4 w-4" />
                 </button>
@@ -772,16 +783,6 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'users' && (
-          <UsersTable 
-            users={users}
-            onAddUser={handleAddUser}
-            onEditUser={handleEditUser}
-            onDeleteUser={handleDeleteUser}
-            currentUser={currentUser}
-          />
-        )}
-
         {activeTab === 'webhook' && (
           <WebhookTable 
             currentUser={currentUser}
@@ -821,7 +822,7 @@ export default function App() {
 
       {/* Simple Footer */}
       <footer className="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-400 shrink-0">
-        <p>Gerenciador de Expedição • Controle Integrado de Estoque e Demanda em Carteira • {new Date().getFullYear()}</p>
+        <p>Gerenciador de Expedição • Integrado ao Portal Central SSO • {new Date().getFullYear()}</p>
       </footer>
 
     </div>

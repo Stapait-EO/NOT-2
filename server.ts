@@ -219,7 +219,7 @@ function writeDB(data: any) {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   // JSON parsing middleware
   app.use(express.json({ limit: '20mb' }));
@@ -278,6 +278,36 @@ async function startServer() {
     }
   });
 
+  // SSO Token Validation Proxy Route
+  app.post("/api/auth/sso-validate", async (req, res) => {
+    const { token, appId = 'app_notifier', portalUrl } = req.body;
+    if (!token) {
+      return res.status(400).json({ valid: false, error: "Token de autenticação não fornecido." });
+    }
+
+    const baseValidateUrl = portalUrl || 'https://mifireapp.com.br/login/api/auth/validate';
+    const targetUrl = `${baseValidateUrl}?app_id=${encodeURIComponent(appId)}`;
+
+    try {
+      const ssoRes = await fetch(targetUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json'
+        }
+      });
+
+      const data = await ssoRes.json();
+      return res.status(ssoRes.status).json(data);
+    } catch (err: any) {
+      console.error("Erro ao validar token SSO no servidor:", err);
+      return res.status(500).json({
+        valid: false,
+        error: `Falha de comunicação com o Portal SSO: ${err.message || 'Erro de rede'}`
+      });
+    }
+  });
+
   // Serve static files in production, use Vite middleware in dev
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -286,7 +316,13 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    // Find dist path accurately whether running from root, cwd, or within dist/
+    let distPath = path.join(process.cwd(), 'dist');
+    if (!fs.existsSync(distPath) || !fs.existsSync(path.join(distPath, 'index.html'))) {
+      if (fs.existsSync(path.join(__dirname, 'index.html'))) {
+        distPath = __dirname;
+      }
+    }
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
