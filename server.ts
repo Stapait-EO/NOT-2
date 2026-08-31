@@ -3,7 +3,61 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 
+// Global crash and error diagnostics
+process.on('uncaughtException', (err) => {
+  const errLog = `[CRITICAL UNCAUGHT EXCEPTION] ${new Date().toISOString()}: ${err.stack || err}\n`;
+  console.error(errLog);
+  try {
+    fs.appendFileSync(path.join(process.cwd(), 'debug_error.log'), errLog, 'utf-8');
+  } catch (_) {}
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  const errLog = `[CRITICAL UNHANDLED REJECTION] ${new Date().toISOString()}: ${reason}\n`;
+  console.error(errLog);
+  try {
+    fs.appendFileSync(path.join(process.cwd(), 'debug_error.log'), errLog, 'utf-8');
+  } catch (_) {}
+});
+
 const DB_FILE = path.join(process.cwd(), "db.json");
+
+// Rolling in-memory log of recent requests for debug inspection
+const recentRequests: Array<{
+  timestamp: string;
+  method: string;
+  url: string;
+  originalUrl: string;
+  ip: string;
+  status?: number;
+  query: any;
+  headers: Record<string, string | string[] | undefined>;
+}> = [];
+
+function logRequest(req: express.Request, res: express.Response) {
+  const reqInfo = {
+    timestamp: new Date().toISOString(),
+    method: req.method,
+    url: req.url,
+    originalUrl: req.originalUrl,
+    ip: req.ip || (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown',
+    query: req.query,
+    headers: {
+      host: req.headers.host,
+      'user-agent': req.headers['user-agent'],
+      referer: req.headers.referer,
+      'x-forwarded-for': req.headers['x-forwarded-for'],
+      'x-forwarded-proto': req.headers['x-forwarded-proto'],
+    }
+  };
+
+  if (recentRequests.length >= 100) {
+    recentRequests.shift();
+  }
+  recentRequests.push(reqInfo);
+
+  console.log(`[REQUEST] ${reqInfo.timestamp} | ${req.method} ${req.originalUrl} | IP: ${reqInfo.ip}`);
+}
 
 const INITIAL_DB = {
   products: [
@@ -221,16 +275,99 @@ async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
+  // Global Request Logging Middleware
+  app.use((req, res, next) => {
+    logRequest(req, res);
+    next();
+  });
+
   // JSON parsing middleware
   app.use(express.json({ limit: '20mb' }));
 
+  // Debug Diagnostics Endpoint (accessible via multiple aliases for easy testing in browser)
+  const handleDebug = (req: express.Request, res: express.Response) => {
+    let filesInCwd: string[] = [];
+    try {
+      filesInCwd = fs.readdirSync(process.cwd());
+    } catch (e: any) {
+      filesInCwd = [`Erro ao listar cwd: ${e.message}`];
+    }
+
+    let distPath = path.join(process.cwd(), 'dist');
+    let distExists = fs.existsSync(distPath);
+    let filesInDist: string[] = [];
+    if (distExists) {
+      try {
+        filesInDist = fs.readdirSync(distPath);
+      } catch (e: any) {
+        filesInDist = [`Erro ao listar dist: ${e.message}`];
+      }
+    }
+
+    let dbExists = fs.existsSync(DB_FILE);
+    let dbWritable = false;
+    try {
+      fs.accessSync(process.cwd(), fs.constants.W_OK);
+      dbWritable = true;
+    } catch (_) {
+      dbWritable = false;
+    }
+
+    res.json({
+      status: "online",
+      serverTime: new Date().toISOString(),
+      nodeVersion: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      processId: process.pid,
+      uptimeSeconds: Math.floor(process.uptime()),
+      cwd: process.cwd(),
+      dirname: __dirname,
+      configuredPort: PORT,
+      environment: {
+        NODE_ENV: process.env.NODE_ENV || 'production',
+        PORT: process.env.PORT || 'default 3000',
+        PASSENGER_APP_ENV: process.env.PASSENGER_APP_ENV || null
+      },
+      fileChecks: {
+        distPath,
+        distExists,
+        indexHtmlExists: fs.existsSync(path.join(distPath, 'index.html')) || fs.existsSync(path.join(__dirname, 'index.html')),
+        dbFileLocation: DB_FILE,
+        dbExists,
+        directoryWritable: dbWritable,
+        filesInCwd,
+        filesInDist
+      },
+      currentIncomingRequest: {
+        method: req.method,
+        url: req.url,
+        originalUrl: req.originalUrl,
+        headers: req.headers,
+        query: req.query
+      },
+      recentRequestsLog: recentRequests.slice(-30)
+    });
+  };
+
+  // Register Debug Routes
+  app.get("/api/debug", handleDebug);
+  app.get("/debug", handleDebug);
+  app.get("/notifier/api/debug", handleDebug);
+  app.get("/notifier/debug", handleDebug);
+
+  // Health check endpoints
+  app.get(["/api/health", "/health", "/notifier/api/health"], (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString(), service: "notifier" });
+  });
+
   // Get full DB state
-  app.get("/api/db", (req, res) => {
+  app.get(["/api/db", "/notifier/api/db"], (req, res) => {
     res.json(readDB());
   });
 
   // Update DB state
-  app.post("/api/db", (req, res) => {
+  app.post(["/api/db", "/notifier/api/db"], (req, res) => {
     const currentData = readDB();
     const newData = { ...currentData, ...req.body };
     const success = writeDB(newData);
@@ -242,7 +379,7 @@ async function startServer() {
   });
 
   // API proxy endpoint to bypass CORS and browser HTTP limitations
-  app.post("/api/proxy-webhook", async (req, res) => {
+  app.post(["/api/proxy-webhook", "/notifier/api/proxy-webhook"], async (req, res) => {
     const { url, headers, body } = req.body;
     if (!url) {
       return res.status(400).json({ error: "A URL de destino é obrigatória." });
@@ -279,7 +416,7 @@ async function startServer() {
   });
 
   // SSO Token Validation Proxy Route
-  app.post("/api/auth/sso-validate", async (req, res) => {
+  app.post(["/api/auth/sso-validate", "/notifier/api/auth/sso-validate"], async (req, res) => {
     const { token, appId = 'app_notifier', portalUrl } = req.body;
     if (!token) {
       return res.status(400).json({ valid: false, error: "Token de autenticação não fornecido." });
@@ -323,14 +460,19 @@ async function startServer() {
         distPath = __dirname;
       }
     }
+
+    // Serve static files from root AND from /notifier prefix
     app.use(express.static(distPath));
+    app.use("/notifier", express.static(distPath));
+
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
+    console.log(`[BOOT] Server started successfully on port ${PORT} at ${new Date().toISOString()}`);
+    console.log(`[BOOT] Working Directory: ${process.cwd()}`);
   });
 }
 

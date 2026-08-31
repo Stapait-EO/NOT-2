@@ -20,14 +20,26 @@ export function extractAndStoreTokenFromUrl(): string | null {
 
   try {
     const url = new URL(window.location.href);
-    const token = url.searchParams.get('token');
+    console.log('[SSO Debug] Current Full URL:', window.location.href);
+    console.log('[SSO Debug] Pathname:', window.location.pathname);
+    console.log('[SSO Debug] Search Params:', window.location.search);
+
+    // Support both ?sso_token=..., ?token=..., ?access_token=...
+    const token = url.searchParams.get('sso_token') || 
+                  url.searchParams.get('token') || 
+                  url.searchParams.get('access_token') ||
+                  url.searchParams.get('auth_token');
 
     if (token) {
+      console.log('[SSO Debug] Successfully extracted token:', token.substring(0, 10) + '...');
       // Store token safely in localStorage
       localStorage.setItem(STORAGE_TOKEN_KEY, token);
 
       // Clean the URL without triggering a page reload
+      url.searchParams.delete('sso_token');
       url.searchParams.delete('token');
+      url.searchParams.delete('access_token');
+      url.searchParams.delete('auth_token');
       const cleanUrl = url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : '') + url.hash;
       window.history.replaceState({}, document.title, cleanUrl || '/');
 
@@ -37,7 +49,11 @@ export function extractAndStoreTokenFromUrl(): string | null {
     console.error('[SSO] Erro ao extrair token da URL:', err);
   }
 
-  return getStoredSSOToken();
+  const stored = getStoredSSOToken();
+  if (stored) {
+    console.log('[SSO Debug] Using stored token from localStorage:', stored.substring(0, 10) + '...');
+  }
+  return stored;
 }
 
 /**
