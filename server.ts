@@ -1,7 +1,6 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { createServer as createViteServer } from "vite";
 
 // Global crash and error diagnostics
 process.on('uncaughtException', (err) => {
@@ -447,6 +446,7 @@ async function startServer() {
 
   // Serve static files in production, use Vite middleware in dev
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
