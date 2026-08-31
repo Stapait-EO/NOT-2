@@ -53,21 +53,20 @@ import OrdersTable from './components/OrdersTable';
 import WebhookTable from './components/WebhookTable';
 import ProductsTable from './components/ProductsTable';
 import Migration from './components/Migration';
-
-const DEFAULT_SSO_USER: UserAccount = {
-  id: 'sso-user',
-  username: 'admin',
-  fullName: 'Administrador SSO',
-  email: 'admin@mifireapp.com.br',
-  role: 'admin',
-  portalAppId: SSO_CONFIG.appId,
-  createdAt: new Date().toISOString()
-};
+import SSOGuard from './components/SSOGuard';
 
 export default function App() {
-  // Current authenticated user (seamlessly loaded from cache or default SSO profile)
-  const [currentUser, setCurrentUser] = useState<UserAccount>(() => getCachedSSOUser() || DEFAULT_SSO_USER);
-  const [isSSOConnected, setIsSSOConnected] = useState<boolean>(false);
+  return (
+    <SSOGuard>
+      {(authenticatedUser) => <MainApplication initialUser={authenticatedUser} />}
+    </SSOGuard>
+  );
+}
+
+function MainApplication({ initialUser }: { initialUser: UserAccount }) {
+  // Current authenticated user (validated from Portal MiFire SSO)
+  const [currentUser, setCurrentUser] = useState<UserAccount>(initialUser);
+  const [isSSOConnected, setIsSSOConnected] = useState<boolean>(true);
 
   // Load initial persistent states
   const [stock, setStock] = useState<StockBalance[]>(getStoredStock);
@@ -83,27 +82,6 @@ export default function App() {
 
   // Track if initial load from the backend has completed
   const [initialLoadDone, setInitialLoadDone] = useState(false);
-
-  // Background SSO Session Verification (Non-blocking)
-  useEffect(() => {
-    const syncSSOSession = async () => {
-      const token = extractAndStoreTokenFromUrl() || getStoredSSOToken();
-      if (!token) return;
-
-      try {
-        const validation = await validateSSOToken(token, SSO_CONFIG.appId);
-        if (validation.valid && validation.user) {
-          setCurrentUser(validation.user);
-          setCachedSSOUser(validation.user);
-          setIsSSOConnected(true);
-        }
-      } catch (err) {
-        console.warn('[SSO] Verificação em segundo plano:', err);
-      }
-    };
-
-    syncSSOSession();
-  }, []);
 
   // 1. Initial Load from Backend Database File
   useEffect(() => {

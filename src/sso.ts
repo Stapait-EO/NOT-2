@@ -198,15 +198,17 @@ export function redirectToSSOLogin(customRedirectUrl?: string): void {
   const currentUrl = customRedirectUrl || window.location.href;
   const loginUrl = `${SSO_CONFIG.loginUrl}?redirect=${encodeURIComponent(currentUrl)}&app_id=${encodeURIComponent(SSO_CONFIG.appId)}`;
   
+  console.log('[SSO] Redirecionando para login central:', loginUrl);
   window.location.href = loginUrl;
 }
 
 /**
- * Returns to the Central SSO Portal dashboard/hub, preserving the active session.
+ * Returns to the Central SSO Portal dashboard/hub, clearing local session.
  */
 export function logoutSSO(): void {
   if (typeof window === 'undefined') return;
-  window.location.href = SSO_CONFIG.portalUrl;
+  clearSSOSession();
+  window.location.href = `${SSO_CONFIG.portalUrl}?logout=true`;
 }
 
 /**
