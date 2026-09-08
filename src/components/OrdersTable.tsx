@@ -21,6 +21,7 @@ import {
   Clipboard
 } from 'lucide-react';
 import { OrderHeader, OrderItem, Product, UserRole, WebhookConfig, FieldMapping } from '../types';
+import { executeProxyWebhook } from '../utils/proxyWebhook';
 
 interface OrdersTableProps {
   orders: OrderHeader[];
@@ -251,25 +252,18 @@ export default function OrdersTable({
       addLog(`Iniciando a requisição POST para o Webhook através do servidor proxy local...`);
       addLog(`Parâmetros enviados no payload (POST Body): ${JSON.stringify(requestBody)}`);
 
-      const response = await fetch('/api/proxy-webhook', {
-        method: 'POST',
+      const data = await executeProxyWebhook({
+        url: webhook.url,
         headers: {
-          'Content-Type': 'application/json'
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${webhook.secretKey || 'c9211efc48ddf332ed8927f8769a45bc4a5c20356a04baae0825bd7de5e9198d'}`,
+          "X-API-Key": `${webhook.secretKey || 'c9211efc48ddf332ed8927f8769a45bc4a5c20356a04baae0825bd7de5e9198d'}`
         },
-        body: JSON.stringify({
-          url: webhook.url,
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${webhook.secretKey || 'c9211efc48ddf332ed8927f8769a45bc4a5c20356a04baae0825bd7de5e9198d'}`,
-            "X-API-Key": `${webhook.secretKey || 'c9211efc48ddf332ed8927f8769a45bc4a5c20356a04baae0825bd7de5e9198d'}`
-          },
-          body: requestBody
-        })
+        body: requestBody
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Erro na resposta do servidor do Webhook.');
+      if (!data.ok) {
+        throw new Error(`Erro na resposta do servidor do Webhook (Status: ${data.status} ${data.statusText || ''}).`);
       }
 
       addLog(`Chamada do Webhook concluída com sucesso (Status: ${data.status} ${data.statusText || 'OK'}, Duração: ${data.duration}ms).`);
@@ -397,25 +391,18 @@ export default function OrdersTable({
             };
 
             addLog(`Iniciando a requisição POST para a API de código 3 através do servidor proxy local...`);
-            const response3 = await fetch('/api/proxy-webhook', {
-              method: 'POST',
+            const data3 = await executeProxyWebhook({
+              url: webhook3.url,
               headers: {
-                'Content-Type': 'application/json'
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${webhook3.secretKey || 'c9211efc48ddf332ed8927f8769a45bc4a5c20356a04baae0825bd7de5e9198d'}`,
+                "X-API-Key": `${webhook3.secretKey || 'c9211efc48ddf332ed8927f8769a45bc4a5c20356a04baae0825bd7de5e9198d'}`
               },
-              body: JSON.stringify({
-                url: webhook3.url,
-                headers: {
-                  "Content-Type": "application/json",
-                  "Authorization": `Bearer ${webhook3.secretKey || 'c9211efc48ddf332ed8927f8769a45bc4a5c20356a04baae0825bd7de5e9198d'}`,
-                  "X-API-Key": `${webhook3.secretKey || 'c9211efc48ddf332ed8927f8769a45bc4a5c20356a04baae0825bd7de5e9198d'}`
-                },
-                body: requestBody3
-              })
+              body: requestBody3
             });
 
-            const data3 = await response3.json();
-            if (!response3.ok) {
-              throw new Error(data3.error || 'Falha no proxy ao acessar API de código 3.');
+            if (!data3.ok) {
+              throw new Error(`Falha ao acessar API de código 3 (Status: ${data3.status} ${data3.statusText || ''}).`);
             }
 
             if (data3.body) {

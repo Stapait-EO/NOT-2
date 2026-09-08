@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { SaleRecord, Product, WebhookConfig, FieldMapping, StockBalance, Warehouse } from '../types';
 import { exportSalesToExcel } from '../utils/exportSalesExcel';
+import { executeProxyWebhook } from '../utils/proxyWebhook';
 
 interface SalesTableProps {
   sales: SaleRecord[];
@@ -814,25 +815,18 @@ export const SalesTable: React.FC<SalesTableProps> = ({
       addLog(`Enviando requisição POST para o Webhook através do servidor proxy local...`);
       addLog(`Parâmetros enviados (POST Body): ${JSON.stringify(requestBody)}`);
 
-      const response = await fetch('/api/proxy-webhook', {
-        method: 'POST',
+      const data = await executeProxyWebhook({
+        url: webhook.url,
         headers: {
-          'Content-Type': 'application/json'
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${webhook.secretKey || ''}`,
+          "X-API-Key": `${webhook.secretKey || ''}`
         },
-        body: JSON.stringify({
-          url: webhook.url,
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${webhook.secretKey || ''}`,
-            "X-API-Key": `${webhook.secretKey || ''}`
-          },
-          body: requestBody
-        })
+        body: requestBody
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Erro na resposta do servidor do Webhook.');
+      if (!data.ok) {
+        throw new Error(`Erro na resposta do servidor do Webhook (Status: ${data.status} ${data.statusText || ''}).`);
       }
 
       addLog(`Chamada do Webhook concluída com sucesso (Status: ${data.status}, Duração: ${data.duration}ms).`);

@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { StockBalance, Product, UserRole, WebhookConfig, FieldMapping, Warehouse, OrderHeader } from '../types';
 import { INITIAL_WAREHOUSES } from '../data';
+import { executeProxyWebhook } from '../utils/proxyWebhook';
 
 interface StockTableProps {
   stock: StockBalance[];
@@ -169,25 +170,18 @@ export default function StockTable({
       addLog(`Parâmetros enviados no payload (POST Body): ${JSON.stringify(requestBody)}`);
 
       // 3. Executar o Webhook via proxy conforme Requisito 4
-      const response = await fetch('/api/proxy-webhook', {
-        method: 'POST',
+      const data = await executeProxyWebhook({
+        url: webhook.url,
         headers: {
-          'Content-Type': 'application/json'
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${webhook.secretKey || 'c9211efc48ddf332ed8927f8769a45bc4a5c20356a04baae0825bd7de5e9198d'}`,
+          "X-API-Key": `${webhook.secretKey || 'c9211efc48ddf332ed8927f8769a45bc4a5c20356a04baae0825bd7de5e9198d'}`
         },
-        body: JSON.stringify({
-          url: webhook.url,
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${webhook.secretKey || 'c9211efc48ddf332ed8927f8769a45bc4a5c20356a04baae0825bd7de5e9198d'}`,
-            "X-API-Key": `${webhook.secretKey || 'c9211efc48ddf332ed8927f8769a45bc4a5c20356a04baae0825bd7de5e9198d'}`
-          },
-          body: requestBody
-        })
+        body: requestBody
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Erro na resposta do servidor do Webhook.');
+      if (!data.ok) {
+        throw new Error(`Erro na resposta do servidor do Webhook (Status: ${data.status} ${data.statusText || ''}).`);
       }
 
       addLog(`Chamada do Webhook concluída com sucesso (Status: ${data.status} ${data.statusText || 'OK'}, Duração: ${data.duration}ms).`);

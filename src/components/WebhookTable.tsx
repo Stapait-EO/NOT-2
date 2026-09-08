@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { UserAccount, WebhookConfig, FieldMapping, StockBalance, OrderHeader, Product } from '../types';
+import { executeProxyWebhook } from '../utils/proxyWebhook';
 
 interface WebhookTableProps {
   currentUser: UserAccount;
@@ -617,24 +618,12 @@ export default function WebhookTable({
     const startTime = performance.now();
 
     try {
-      const response = await fetch('/api/proxy-webhook', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          url: executingWebhook.url,
-          headers: parsedHeaders,
-          body: parsedPayload
-        })
+      const data = await executeProxyWebhook({
+        url: executingWebhook.url,
+        headers: parsedHeaders,
+        body: parsedPayload
       });
-
-      const data = await response.json();
       const duration = (performance.now() - startTime).toFixed(0);
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Erro interno no servidor proxy');
-      }
 
       let formattedBody = data.body;
       try {
