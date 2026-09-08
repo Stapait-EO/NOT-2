@@ -752,16 +752,13 @@ export default function ProductsTable({
                 <th className="py-3 px-6">Categoria</th>
                 <th className="py-3 px-6">Cód. Interno</th>
                 <th className="py-3 px-6">Cód. Estruturado</th>
-                <th className="py-3 px-6">Lote</th>
-                <th className="py-3 px-6">Qtd Média 1x</th>
-                <th className="py-3 px-6">Qtd Média 3x</th>
                 {canManageProducts && <th className="py-3 px-6 text-right">Ações</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700 text-sm">
               {filteredProducts.length === 0 ? (
                 <tr>
-                  <td colSpan={canManageProducts ? 9 : 8} className="py-12 text-center text-slate-400">
+                  <td colSpan={canManageProducts ? 6 : 5} className="py-12 text-center text-slate-400">
                     <Archive className="h-10 w-10 mx-auto text-slate-300 mb-2" />
                     <p className="font-semibold text-slate-500">Nenhum produto cadastrado</p>
                     <p className="text-xs mt-1">Modifique sua busca ou cadastre um novo produto.</p>
@@ -803,21 +800,6 @@ export default function ProductsTable({
                     {/* codigo */}
                     <td className="py-4 px-6 font-mono text-xs text-slate-600">
                       {prod.codigo || <span className="text-slate-300">-</span>}
-                    </td>
-
-                    {/* lote */}
-                    <td className="py-4 px-6 font-mono text-xs text-slate-600">
-                      {prod.lote || <span className="text-slate-300">-</span>}
-                    </td>
-
-                    {/* avgQty1x */}
-                    <td className="py-4 px-6 font-mono text-xs text-slate-700 font-bold">
-                      {prod.avgQty1x !== undefined ? prod.avgQty1x : <span className="text-slate-300">-</span>}
-                    </td>
-
-                    {/* avgQty3x */}
-                    <td className="py-4 px-6 font-mono text-xs text-indigo-700 font-bold">
-                      {prod.avgQty3x !== undefined ? prod.avgQty3x : <span className="text-slate-300">-</span>}
                     </td>
 
                     {/* Action buttons */}

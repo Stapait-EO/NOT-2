@@ -99,4 +99,15 @@ export interface FieldMapping {
   updatedAt: string;
 }
 
+export interface SaleRecord {
+  id: string;
+  sku: string; // CODIGO (SKU)
+  productName?: string;
+  month: number; // 1-12
+  year: number; // e.g. 2025, 2026
+  quantity: number; // Qtd vendida
+  date?: string; // e.g. "2025-08" or ISO string
+  notes?: string;
+}
+
 

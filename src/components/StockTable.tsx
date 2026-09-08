@@ -1,4 +1,4 @@
-import { useState, useMemo, FormEvent } from 'react';
+import { useState, useMemo, useEffect, useCallback, FormEvent } from 'react';
 import { 
   Plus, 
   Search, 
@@ -14,14 +14,27 @@ import {
   FileText,
   Clipboard,
   Download,
-  CheckCircle2
+  CheckCircle2,
+  Layers,
+  Tag,
+  Copy,
+  Check,
+  ArrowUpDown,
+  Info,
+  Truck,
+  ShoppingCart,
+  ArrowUpRight,
+  Calendar,
+  User,
+  ExternalLink
 } from 'lucide-react';
-import { StockBalance, Product, UserRole, WebhookConfig, FieldMapping, Warehouse } from '../types';
+import { StockBalance, Product, UserRole, WebhookConfig, FieldMapping, Warehouse, OrderHeader } from '../types';
 import { INITIAL_WAREHOUSES } from '../data';
 
 interface StockTableProps {
   stock: StockBalance[];
   products: Product[];
+  orders?: OrderHeader[];
   onAddStock: (item: Omit<StockBalance, 'id'>) => void;
   onEditStock: (item: StockBalance) => void;
   onDeleteStock: (id: string) => void;
@@ -33,11 +46,13 @@ interface StockTableProps {
   webhooks: WebhookConfig[];
   fieldMappings: FieldMapping[];
   onImportStock: (imported: Omit<StockBalance, 'id'>[], overwrite?: boolean) => void;
+  onNavigateToOrders?: () => void;
 }
 
 export default function StockTable({ 
   stock, 
   products, 
+  orders = [],
   onAddStock, 
   onEditStock, 
   onDeleteStock,
@@ -48,12 +63,14 @@ export default function StockTable({
   onClearAllStock,
   webhooks,
   fieldMappings,
-  onImportStock
+  onImportStock,
+  onNavigateToOrders
 }: StockTableProps) {
   const canManageStock = currentUserRole === 'admin' || currentUserRole === 'almoxarife';
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedWarehouseFilter, setSelectedWarehouseFilter] = useState('Todos');
+  const [filterOnlyWithOpenOrders, setFilterOnlyWithOpenOrders] = useState(false);
 
   // Webhook execution and import integration states
   const [isUpdating, setIsUpdating] = useState(false);
@@ -111,7 +128,7 @@ export default function StockTable({
       return isNaN(parsed) ? 0 : parsed;
     };
 
-    addLog('O usuário clicou no botão "Atualizar" na tela de Saldo de Estoque.');
+    addLog('O usuário clicou no botão "Atualizar" na tela de Análise Estoque.');
 
     // 1. Apagar todos os itens da tabela 'StockBalance' conforme Requisito 3
     if (onClearAllStock) {
@@ -130,7 +147,7 @@ export default function StockTable({
     if (!webhook) {
       addLog('ERRO: Nenhum webhook ativo associado a esta tela ou à tabela StockBalance.');
       setUpdateStatus('error');
-      setUpdateMessage('Nenhum webhook ativo configurado para o Saldo de Estoque. Por favor, configure um webhook com esta tela de execução em "Configurações de Webhook".');
+      setUpdateMessage('Nenhum webhook ativo configurado para a Análise Estoque. Por favor, configure um webhook com esta tela de execução em "Configurações de Webhook".');
       setIsUpdating(false);
       setExecutionLogs(logsList);
       setIsLogModalOpen(true);
@@ -229,61 +246,77 @@ export default function StockTable({
 
       addLog(`Dados encontrados no retorno do webhook (total de registros: ${itemsArray.length}). Iniciando validação e mapeamento...`);
 
-      // Encontra o mapeamento De/Para configurado para este Webhook & Tabela
+      // 1. Localiza o mapeamento De/Para configurado para StockBalance (específico do webhook ou geral para StockBalance)
       const mapping = fieldMappings.find(
         m => m.webhookId === webhook!.id && 
-        m.systemTable.trim().toLowerCase() === 'stockbalance'
+        (m.systemTable.trim().toLowerCase() === 'stockbalance' || m.systemTable.trim().toLowerCase() === 'stock')
+      ) || fieldMappings.find(
+        m => (m.systemTable.trim().toLowerCase() === 'stockbalance' || m.systemTable.trim().toLowerCase() === 'stock')
       );
 
+      // Helper robusto para ler campos do webhook considerando mapeamento De/Para, variações de maiúsculas/minúsculas e fallbacks inteligentes
+      const resolveWebhookField = (item: any, configuredKey?: string, fallbackKeys: string[] = []): any => {
+        if (!item || typeof item !== 'object') return undefined;
+
+        // 1. Chave configurada no De/Para
+        if (configuredKey && typeof configuredKey === 'string' && configuredKey.trim()) {
+          const trimmed = configuredKey.trim();
+          if (item[trimmed] !== undefined && item[trimmed] !== null && item[trimmed] !== '') {
+            return item[trimmed];
+          }
+          const lower = trimmed.toLowerCase();
+          const foundKey = Object.keys(item).find(k => k.trim().toLowerCase() === lower);
+          if (foundKey && item[foundKey] !== undefined && item[foundKey] !== null && item[foundKey] !== '') {
+            return item[foundKey];
+          }
+        }
+
+        // 2. Chaves de fallback
+        for (const fb of fallbackKeys) {
+          if (item[fb] !== undefined && item[fb] !== null && item[fb] !== '') {
+            return item[fb];
+          }
+          const lowerFb = fb.toLowerCase();
+          const foundFb = Object.keys(item).find(k => k.trim().toLowerCase() === lowerFb);
+          if (foundFb && item[foundFb] !== undefined && item[foundFb] !== null && item[foundFb] !== '') {
+            return item[foundFb];
+          }
+        }
+
+        return undefined;
+      };
+
       if (mapping) {
-        addLog(`Utilizando mapeamento "De/Para" ativo localizado (ID: ${mapping.id}, atualizado em: ${new Date(mapping.updatedAt).toLocaleString()}).`);
+        addLog(`Utilizando mapeamento "De/Para" ativo localizado (ID: ${mapping.id}, Tabela: ${mapping.systemTable}).`);
+        const whMap = mapping.mappings['warehouse'] || 'cdgrupo (automático)';
+        addLog(`   • Regra de Depósito De/Para: warehouse ← "${whMap}"`);
       } else {
-        addLog('AVISO: Nenhum mapeamento "De/Para" customizado localizado para esta tabela. Utilizando nomes de campos originais do payload.');
+        addLog('AVISO: Nenhum mapeamento "De/Para" manual localizado. Aplicando tradução automática inteligente (warehouse ← cdgrupo/depósito/filial).');
       }
 
-      // Mapeia e valida os dados do formato de retorno do Webhook de volta ao padrão do sistema (StockBalance)
-      const systemFields = ['productCode', 'productName', 'warehouse', 'quantity', 'pr_cod', 'codigo', 'lote', 'pr_preco', 'vlrest'];
-      
+      addLog(`Depósitos cadastrados no sistema (${warehouses.length}): ${warehouses.map(w => `${w.name} [${w.groupName || 'Sem grupo'}]`).join(', ')}`);
+
       const validImportedItems: Omit<StockBalance, 'id'>[] = [];
       const rejectedItems: { item: any; reason: string }[] = [];
 
       itemsArray.forEach((webhookItem: any, index: number) => {
         const mappedItem: any = {};
-        systemFields.forEach(sysKey => {
-          const webhookKey = mapping?.mappings[sysKey];
-          if (webhookKey && webhookItem[webhookKey] !== undefined) {
-            mappedItem[sysKey] = webhookItem[webhookKey];
-          } else if (webhookItem[sysKey] !== undefined) {
-            mappedItem[sysKey] = webhookItem[sysKey];
-          }
-        });
 
-        // Resolve productCode with auxiliary and nested field fallbacks
-        const productCode = mappedItem.productCode || 
-                            mappedItem.pr_cod || 
-                            mappedItem.codigo || 
-                            webhookItem.productCode || 
-                            webhookItem.sku || 
-                            webhookItem.code || 
-                            webhookItem.pr_cod || 
-                            webhookItem.codigo || 
-                            webhookItem.cod || 
-                            webhookItem.cod_produto || 
-                            webhookItem.product_code ||
-                            webhookItem.productId ||
-                            webhookItem.product_id;
-        
-        if (!productCode) {
+        // Resolve productCode with mapping and fallbacks
+        const productCodeRaw = resolveWebhookField(webhookItem, mapping?.mappings['productCode'], [
+          'productCode', 'modelo', 'code', 'sku', 'pr_cod', 'codigo', 'cod', 'cod_produto', 'product_code', 'productId', 'product_id'
+        ]);
+
+        if (!productCodeRaw) {
           rejectedItems.push({
             item: webhookItem,
-            reason: `Item #${index + 1}: Nenhum código de produto identificado nos campos mapeados ou originais (productCode, sku, code, pr_cod, codigo).`
+            reason: `Item #${index + 1}: Nenhum código de produto identificado nos campos mapeados ou originais (productCode, modelo, sku, code, pr_cod, codigo).`
           });
           return;
         }
 
         // VERIFICA SE O PRODUTO EXISTE NO CADASTRO DE PRODUTOS
-        // Compara com p.code, p.pr_cod e p.codigo
-        const codeStr = String(productCode).trim().toLowerCase();
+        const codeStr = String(productCodeRaw).trim().toLowerCase();
         const matchedProd = products.find(p => {
           const matchCode = String(p.code).trim().toLowerCase() === codeStr;
           const matchPrCod = p.pr_cod !== undefined && String(p.pr_cod).trim().toLowerCase() === codeStr;
@@ -294,44 +327,138 @@ export default function StockTable({
         if (!matchedProd) {
           rejectedItems.push({
             item: webhookItem,
-            reason: `Código de Produto "${productCode}" não foi localizado no cadastro de Produtos (verificado SKU, pr_cod e codigo).`
+            reason: `Código de Produto "${productCodeRaw}" não foi localizado no cadastro de Produtos (verificado SKU, pr_cod e codigo).`
           });
           return;
         }
 
-        // Preenche os campos obrigatórios utilizando os cadastros e dados mapeados
-        if (!mappedItem.productCode) mappedItem.productCode = matchedProd.code;
-        
-        if (!mappedItem.productName) {
-          mappedItem.productName = matchedProd.name;
-        }
-        
-        if (!mappedItem.warehouse) {
-          mappedItem.warehouse = String(webhookItem.warehouse || webhookItem.deposito || 'DEP01 - Depósito Central');
-        }
-        
-        if (mappedItem.quantity === undefined) {
-          mappedItem.quantity = Number(webhookItem.quantity || webhookItem.qtd || webhookItem.stock || 0);
+        mappedItem.productCode = matchedProd.code;
+
+        // Resolve productName
+        const productNameRaw = resolveWebhookField(webhookItem, mapping?.mappings['productName'], [
+          'productName', 'descricao', 'name', 'nome', 'description', 'product_name'
+        ]);
+        mappedItem.productName = productNameRaw ? String(productNameRaw).trim() : matchedProd.name;
+
+        // RESOLVE O DEPÓSITO COM DE/PARA E TRADUÇÃO COM O CADASTRO DE DEPÓSITOS
+        const rawWarehouseValue = resolveWebhookField(webhookItem, mapping?.mappings['warehouse'], [
+          'warehouse', 'cdgrupo', 'cd_grupo', 'deposito', 'armazem', 'filial', 'local', 'cd_deposito', 'grupo'
+        ]);
+
+        let translatedWarehouse = '';
+        if (rawWarehouseValue !== undefined && rawWarehouseValue !== null && String(rawWarehouseValue).trim() !== '') {
+          const rawWhStr = String(rawWarehouseValue).trim();
+          const rawWhLower = rawWhStr.toLowerCase();
+
+          // Tradução com o Pré-cadastro de Depósitos (De/Para de Depósito):
+          // 1. Busca correspondência exata por nome/código (ex: "0002.001" === "0002.001")
+          // 2. Busca por prefixo/início (ex: "0002.001 - São Paulo")
+          // 3. Busca por agrupamento cadastrado (ex: "São Paulo")
+          // 4. Busca por ID (ex: "wh-1")
+          const matchedWh = warehouses.find(w => w.name.trim().toLowerCase() === rawWhLower) ||
+                            warehouses.find(w => w.name.trim().toLowerCase().startsWith(rawWhLower) || rawWhLower.startsWith(w.name.trim().toLowerCase())) ||
+                            warehouses.find(w => w.groupName && w.groupName.trim().toLowerCase() === rawWhLower) ||
+                            warehouses.find(w => w.id.toLowerCase() === rawWhLower);
+
+          if (matchedWh) {
+            translatedWarehouse = matchedWh.name;
+          } else {
+            // Mantém o código do webhook traduzido sem forçar "DEP01"
+            translatedWarehouse = rawWhStr;
+          }
         } else {
-          mappedItem.quantity = Number(mappedItem.quantity);
+          // Fallback final: primeiro depósito ativo do cadastro
+          const firstActiveWh = warehouses.find(w => w.isActive)?.name || 'DEP01 - Depósito Central';
+          translatedWarehouse = firstActiveWh;
         }
 
-        // Converte campos numéricos opcionais com segurança
-        if (mappedItem.pr_cod !== undefined) mappedItem.pr_cod = Number(mappedItem.pr_cod);
-        if (mappedItem.pr_preco !== undefined) {
-          mappedItem.pr_preco = parseWebhookMonetary(mappedItem.pr_preco);
+        mappedItem.warehouse = translatedWarehouse;
+
+        // Resolve quantity
+        const rawQuantity = resolveWebhookField(webhookItem, mapping?.mappings['quantity'], [
+          'quantity', 'qtdest', 'qtdEst', 'qtd', 'stock', 'quantidade', 'saldo', 'quantidade_atual'
+        ]);
+        mappedItem.quantity = rawQuantity !== undefined ? Number(rawQuantity) : 0;
+
+        // Resolve campos auxiliares opcionais
+        const rawPrCod = resolveWebhookField(webhookItem, mapping?.mappings['pr_cod'], [
+          'pr_cod', 'prCod', 'cod_interno', 'codigo_interno'
+        ]);
+        if (rawPrCod !== undefined) mappedItem.pr_cod = Number(rawPrCod);
+
+        const rawCodigo = resolveWebhookField(webhookItem, mapping?.mappings['codigo'], [
+          'codigo', 'cod_estruturado', 'codigo_estruturado'
+        ]);
+        if (rawCodigo !== undefined) mappedItem.codigo = String(rawCodigo).trim();
+
+        const rawLote = resolveWebhookField(webhookItem, mapping?.mappings['lote'], [
+          'lote', 'marca', 'batch', 'lot'
+        ]);
+        if (rawLote !== undefined) mappedItem.lote = String(rawLote).trim();
+
+        const rawPrPreco = resolveWebhookField(webhookItem, mapping?.mappings['pr_preco'], [
+          'pr_preco', 'prPreco', 'preco', 'preco_unitario', 'price', 'unit_price', 'customed', 'custopdr'
+        ]);
+        if (rawPrPreco !== undefined) {
+          mappedItem.pr_preco = parseWebhookMonetary(rawPrPreco);
         } else {
-          // Pega o preço padrão do produto cadastrado como fallback
           mappedItem.pr_preco = (matchedProd as any).pr_preco || 0;
         }
-        
-        if (mappedItem.vlrest !== undefined) {
-          mappedItem.vlrest = parseWebhookMonetary(mappedItem.vlrest);
+
+        const rawVlrest = resolveWebhookField(webhookItem, mapping?.mappings['vlrest'], [
+          'vlrest', 'vlrEst', 'valor_total', 'total_value', 'vlr_estoque'
+        ]);
+        if (rawVlrest !== undefined) {
+          mappedItem.vlrest = parseWebhookMonetary(rawVlrest);
         } else if (mappedItem.pr_preco !== undefined) {
           mappedItem.vlrest = mappedItem.quantity * mappedItem.pr_preco;
         }
 
         validImportedItems.push(mappedItem);
+      });
+
+      // Identifica se algum depósito do webhook não constava no cadastro de depósitos e inclui para sincronização
+      const uniqueFoundWhs = new Set<string>();
+      validImportedItems.forEach(item => {
+        if (item.warehouse) uniqueFoundWhs.add(item.warehouse);
+      });
+
+      const missingWhsToAdd: Warehouse[] = [];
+      uniqueFoundWhs.forEach(whCode => {
+        const alreadyInCad = warehouses.some(w => 
+          w.name.trim().toLowerCase() === whCode.trim().toLowerCase()
+        );
+        if (!alreadyInCad) {
+          let autoGroup = 'Outros';
+          if (whCode.startsWith('0002')) autoGroup = 'São Paulo';
+          else if (whCode.startsWith('0004')) autoGroup = 'Miami';
+          else if (whCode.startsWith('DEP01') || whCode.startsWith('DEP02')) autoGroup = 'São Paulo';
+
+          missingWhsToAdd.push({
+            id: `wh-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            name: whCode,
+            isActive: true,
+            groupName: autoGroup
+          });
+        }
+      });
+
+      if (missingWhsToAdd.length > 0) {
+        const updatedWhList = [...warehouses, ...missingWhsToAdd];
+        onUpdateWarehouses(updatedWhList);
+        addLog(`Novos depósitos cadastrados no sistema: ${missingWhsToAdd.map(w => `${w.name} (${w.groupName})`).join(', ')}.`);
+      }
+
+      // Detalha nos logs a distribuição dos itens por depósito e agrupamento
+      const whCounts: { [key: string]: number } = {};
+      validImportedItems.forEach(item => {
+        whCounts[item.warehouse] = (whCounts[item.warehouse] || 0) + 1;
+      });
+      addLog(`Distribuição dos registros importados por Depósito:`);
+      Object.entries(whCounts).forEach(([wh, count]) => {
+        const whObj = warehouses.find(w => w.name.trim().toLowerCase() === wh.toLowerCase());
+        const grpName = whObj?.groupName || (wh.startsWith('0002') ? 'São Paulo' : wh.startsWith('0004') ? 'Miami' : 'Outros');
+        addLog(`   • Depósito "${wh}" [Grupo: ${grpName}]: ${count} registros`);
       });
 
       // Importa os itens mapeados na tabela 'StockBalance' substituindo os anteriores completamente
@@ -376,7 +503,7 @@ export default function StockTable({
     text += "        RELATÓRIO DE AUDITORIA E EXECUÇÃO DO WEBHOOK\n";
     text += "==================================================\n\n";
     text += `Data/Hora: ${new Date().toLocaleString()}\n`;
-    text += `Tabela Alvo: StockBalance (Saldo de Estoque)\n`;
+    text += `Tabela Alvo: StockBalance (Analise Estoque)\n`;
     text += `Total Processados: ${logSummary.totalRaw}\n`;
     text += `Sucesso (Importados): ${logSummary.totalImported}\n`;
     text += `Rejeitados (Sem cadastro de produto): ${logSummary.totalRejected}\n\n`;
@@ -475,30 +602,101 @@ export default function StockTable({
     return Array.from(set);
   }, [stock, warehouses]);
 
-  // Filtered Stock Balance list
-  const filteredStock = useMemo(() => {
-    return stock.filter(item => {
-      const matchesSearch = 
-        item.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.productCode.toLowerCase().includes(searchTerm.toLowerCase());
-      
-      const matchesWarehouse = 
-        selectedWarehouseFilter === 'Todos' || 
-        item.warehouse === selectedWarehouseFilter;
+  // Open Orders (Pedidos em Aberto / A Sair) Map & Metrics
+  const productOrdersMap = useMemo(() => {
+    const map = new Map<string, {
+      totalQtyOrdered: number;
+      ordersCount: number;
+      ordersList: {
+        orderId: string;
+        orderNumber: string;
+        clientName: string;
+        date: string;
+        priority: string;
+        quantityOrdered: number;
+        unitPrice: number;
+        totalPrice: number;
+      }[];
+    }>();
 
-      return matchesSearch && matchesWarehouse;
+    orders.forEach(order => {
+      (order.items || []).forEach(item => {
+        const rawCode = item.productCode?.trim();
+        if (!rawCode) return;
+        const codeKey = rawCode.toUpperCase();
+
+        let summary = map.get(codeKey);
+        if (!summary) {
+          summary = {
+            totalQtyOrdered: 0,
+            ordersCount: 0,
+            ordersList: []
+          };
+          map.set(codeKey, summary);
+        }
+
+        const qty = Number(item.quantityOrdered) || 0;
+        const price = Number(item.unitPrice) || 0;
+        summary.totalQtyOrdered += qty;
+        summary.ordersList.push({
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          clientName: order.clientName || 'Cliente não informado',
+          date: order.date || '',
+          priority: order.priority || 'Média',
+          quantityOrdered: qty,
+          unitPrice: price,
+          totalPrice: qty * price
+        });
+        summary.ordersCount = summary.ordersList.length;
+      });
     });
-  }, [stock, searchTerm, selectedWarehouseFilter]);
 
-  // Helper to determine warehouse group
-  const getWarehouseGroup = (whName: string): string => {
-    const wh = warehouses.find(w => w.name === whName);
-    if (!wh) return "Outros";
-    if (!wh.isActive) return "Inativo";
-    return wh.groupName.trim() || "Outros";
+    return map;
+  }, [orders]);
+
+  const getProductOrdersSummary = (productCode: string) => {
+    if (!productCode) return { totalQtyOrdered: 0, ordersCount: 0, ordersList: [] };
+    const key = productCode.trim().toUpperCase();
+    return productOrdersMap.get(key) || { totalQtyOrdered: 0, ordersCount: 0, ordersList: [] };
   };
 
-  // Extract all unique group names of active warehouses
+  const totalProductsWithOrdersCount = useMemo(() => {
+    let count = 0;
+    productOrdersMap.forEach(summary => {
+      if (summary.totalQtyOrdered > 0) count++;
+    });
+    return count;
+  }, [productOrdersMap]);
+
+  const totalAllOpenOrdersQty = useMemo(() => {
+    let total = 0;
+    productOrdersMap.forEach(summary => {
+      total += summary.totalQtyOrdered;
+    });
+    return total;
+  }, [productOrdersMap]);
+
+  // Helper to determine warehouse group
+  const getWarehouseGroup = useCallback((whName: string): string => {
+    if (!whName) return "Outros";
+    const cleanWh = String(whName).trim().toLowerCase();
+    const wh = warehouses.find(w => 
+      w.name.trim().toLowerCase() === cleanWh ||
+      cleanWh.startsWith(w.name.trim().toLowerCase()) ||
+      w.name.trim().toLowerCase().startsWith(cleanWh) ||
+      (w.groupName && w.groupName.trim().toLowerCase() === cleanWh)
+    );
+    if (!wh) {
+      if (cleanWh.startsWith('0002')) return "São Paulo";
+      if (cleanWh.startsWith('0004')) return "Miami";
+      return "Outros";
+    }
+    if (!wh.isActive) return "Inativo";
+    return wh.groupName?.trim() || "Outros";
+  }, [warehouses]);
+
+  // Extract all unique group names of active warehouses + any groups present in current stock
   const activeGroups = useMemo(() => {
     const groups = new Set<string>();
     warehouses.forEach(w => {
@@ -506,10 +704,17 @@ export default function StockTable({
         groups.add(w.groupName.trim());
       }
     });
+    // Also include any active groups present in stock items
+    stock.forEach(item => {
+      const grp = getWarehouseGroup(item.warehouse);
+      if (grp && grp !== 'Inativo') {
+        groups.add(grp);
+      }
+    });
     // Fallback/Default groups if none configured
     if (groups.size === 0) {
-      groups.add("Deposito Central");
-      groups.add("Deposito Sul");
+      groups.add("São Paulo");
+      groups.add("Miami");
     }
     // Check if there are active warehouses that are ungrouped (empty groupName)
     const hasUngrouped = warehouses.some(w => w.isActive && !w.groupName?.trim());
@@ -517,7 +722,36 @@ export default function StockTable({
       groups.add("Outros");
     }
     return Array.from(groups);
-  }, [warehouses]);
+  }, [warehouses, stock, getWarehouseGroup]);
+
+  // Filtered Stock Balance list by search term, group, and open orders
+  const filteredStock = useMemo(() => {
+    return stock.filter(item => {
+      const matchesSearch = 
+        item.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        item.productCode.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const itemGroup = getWarehouseGroup(item.warehouse);
+      const matchesWarehouseGroup = 
+        selectedWarehouseFilter === 'Todos' || 
+        itemGroup.toLowerCase() === selectedWarehouseFilter.toLowerCase();
+
+      const matchesOpenOrders = 
+        !filterOnlyWithOpenOrders || 
+        (getProductOrdersSummary(item.productCode).totalQtyOrdered > 0);
+
+      return matchesSearch && matchesWarehouseGroup && matchesOpenOrders;
+    });
+  }, [stock, searchTerm, selectedWarehouseFilter, filterOnlyWithOpenOrders, productOrdersMap, getWarehouseGroup]);
+
+  // Groups to display as columns in the consolidated view
+  const displayedGroups = useMemo(() => {
+    if (selectedWarehouseFilter !== 'Todos') {
+      const matched = activeGroups.filter(g => g.toLowerCase() === selectedWarehouseFilter.toLowerCase());
+      return matched.length > 0 ? matched : activeGroups;
+    }
+    return activeGroups;
+  }, [selectedWarehouseFilter, activeGroups]);
 
   // Grouped Stock items for the Consolidated Grid
   const groupedStock = useMemo(() => {
@@ -587,6 +821,235 @@ export default function StockTable({
     });
     return totals;
   }, [activeGroups, groupedStock]);
+
+  // Batch Breakdown Modal ("Saldo por Lote") State & Calculations
+  const [batchModalData, setBatchModalData] = useState<{
+    isOpen: boolean;
+    productCode: string;
+    productName: string;
+    groupName: string;
+  } | null>(null);
+  const [batchSearchTerm, setBatchSearchTerm] = useState('');
+  const [batchSortField, setBatchSortField] = useState<'lote' | 'warehouse' | 'quantity' | 'pr_preco' | 'vlrest'>('quantity');
+  const [batchSortOrder, setBatchSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [copiedBatchData, setCopiedBatchData] = useState(false);
+
+  const handleOpenBatchModal = (productCode: string, productName: string, groupName: string) => {
+    setBatchSearchTerm('');
+    setBatchSortField('quantity');
+    setBatchSortOrder('desc');
+    setCopiedBatchData(false);
+    setBatchModalData({
+      isOpen: true,
+      productCode,
+      productName,
+      groupName
+    });
+  };
+
+  const handleCloseBatchModal = () => {
+    setBatchModalData(null);
+  };
+
+  // Close batch modal on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && batchModalData?.isOpen) {
+        handleCloseBatchModal();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [batchModalData]);
+
+  // Items belonging to this product and selected warehouse group
+  const batchModalItems = useMemo(() => {
+    if (!batchModalData?.isOpen) return [];
+    return stock.filter(item => {
+      if (item.productCode !== batchModalData.productCode) return false;
+      const grp = getWarehouseGroup(item.warehouse);
+      return grp === batchModalData.groupName;
+    });
+  }, [batchModalData, stock, warehouses]);
+
+  // Filtered and sorted items inside the batch modal
+  const filteredBatchItems = useMemo(() => {
+    let list = batchModalItems.filter(item => {
+      if (!batchSearchTerm.trim()) return true;
+      const q = batchSearchTerm.toLowerCase();
+      const loteMatch = (item.lote || '').toLowerCase().includes(q);
+      const whMatch = (item.warehouse || '').toLowerCase().includes(q);
+      const codigoMatch = (item.codigo || '').toLowerCase().includes(q);
+      const prCodMatch = String(item.pr_cod || '').toLowerCase().includes(q);
+      return loteMatch || whMatch || codigoMatch || prCodMatch;
+    });
+
+    list.sort((a, b) => {
+      let valA: any = a[batchSortField];
+      let valB: any = b[batchSortField];
+
+      if (batchSortField === 'lote') {
+        valA = a.lote || '';
+        valB = b.lote || '';
+        return batchSortOrder === 'asc'
+          ? String(valA).localeCompare(String(valB), undefined, { numeric: true })
+          : String(valB).localeCompare(String(valA), undefined, { numeric: true });
+      }
+      if (batchSortField === 'warehouse') {
+        valA = a.warehouse || '';
+        valB = b.warehouse || '';
+        return batchSortOrder === 'asc'
+          ? String(valA).localeCompare(String(valB))
+          : String(valB).localeCompare(String(valA));
+      }
+
+      const numA = Number(valA) || 0;
+      const numB = Number(valB) || 0;
+      return batchSortOrder === 'asc' ? numA - numB : numB - numA;
+    });
+
+    return list;
+  }, [batchModalItems, batchSearchTerm, batchSortField, batchSortOrder]);
+
+  const batchMetrics = useMemo(() => {
+    let totalQty = 0;
+    let totalVal = 0;
+    const uniqueLots = new Set<string>();
+    const uniqueWhs = new Set<string>();
+
+    batchModalItems.forEach(item => {
+      totalQty += item.quantity;
+      const pr = item.pr_preco || 0;
+      const vl = item.vlrest !== undefined ? item.vlrest : (item.quantity * pr);
+      totalVal += vl;
+      uniqueLots.add(item.lote?.trim() || '(Sem lote)');
+      uniqueWhs.add(item.warehouse);
+    });
+
+    const avgPrice = totalQty > 0 ? (totalVal / totalQty) : 0;
+
+    return {
+      totalQty,
+      totalVal,
+      avgPrice,
+      lotCount: uniqueLots.size,
+      whCount: uniqueWhs.size
+    };
+  }, [batchModalItems]);
+
+  const copyBatchDetailsToClipboard = () => {
+    if (!batchModalData) return;
+    let text = `SALDO POR LOTE - ${batchModalData.productCode} (${batchModalData.productName})\n`;
+    text += `Depósito / Grupo: ${batchModalData.groupName}\n`;
+    text += `Saldo Total: ${batchMetrics.totalQty.toLocaleString('pt-BR')} un | Valor Total: $ ${batchMetrics.totalVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n\n`;
+    text += `Lote\tDepósito\tCód. Estruturado\tpr_cod\tQuantidade\tPreço Unit.\tValor Total\n`;
+    filteredBatchItems.forEach(item => {
+      const pr = item.pr_preco !== undefined ? item.pr_preco : 0;
+      const vl = item.vlrest !== undefined ? item.vlrest : (item.quantity * pr);
+      text += `${item.lote || '-'}\t${item.warehouse}\t${item.codigo || '-'}\t${item.pr_cod || '-'}\t${item.quantity}\t${pr}\t${vl}\n`;
+    });
+    navigator.clipboard.writeText(text);
+    setCopiedBatchData(true);
+    setTimeout(() => setCopiedBatchData(false), 2000);
+  };
+
+  // Open Orders Modal ("Pedidos em Aberto (A Sair)") State & Calculations
+  const [ordersModalData, setOrdersModalData] = useState<{
+    isOpen: boolean;
+    productCode: string;
+    productName: string;
+  } | null>(null);
+  const [ordersSearchTerm, setOrdersSearchTerm] = useState('');
+  const [ordersSortField, setOrdersSortField] = useState<'orderNumber' | 'clientName' | 'date' | 'priority' | 'quantityOrdered' | 'unitPrice' | 'totalPrice'>('quantityOrdered');
+  const [ordersSortOrder, setOrdersSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [copiedOrdersData, setCopiedOrdersData] = useState(false);
+
+  const handleOpenOrdersModal = (productCode: string, productName: string) => {
+    setOrdersSearchTerm('');
+    setOrdersSortField('quantityOrdered');
+    setOrdersSortOrder('desc');
+    setCopiedOrdersData(false);
+    setOrdersModalData({
+      isOpen: true,
+      productCode,
+      productName
+    });
+  };
+
+  const handleCloseOrdersModal = () => {
+    setOrdersModalData(null);
+  };
+
+  // Close orders modal on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && ordersModalData?.isOpen) {
+        handleCloseOrdersModal();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [ordersModalData]);
+
+  // Orders summary for the currently opened modal
+  const currentModalOrdersSummary = useMemo(() => {
+    if (!ordersModalData?.isOpen) return { totalQtyOrdered: 0, ordersCount: 0, ordersList: [] };
+    return getProductOrdersSummary(ordersModalData.productCode);
+  }, [ordersModalData, productOrdersMap]);
+
+  // Physical stock in total across all warehouses for the product in modal
+  const currentModalPhysicalStock = useMemo(() => {
+    if (!ordersModalData?.isOpen) return 0;
+    const targetCode = ordersModalData.productCode.trim().toUpperCase();
+    return stock
+      .filter(s => s.productCode.trim().toUpperCase() === targetCode)
+      .reduce((acc, s) => acc + s.quantity, 0);
+  }, [ordersModalData, stock]);
+
+  // Filtered and sorted orders inside the modal
+  const filteredModalOrders = useMemo(() => {
+    const list = currentModalOrdersSummary.ordersList.filter(item => {
+      if (!ordersSearchTerm.trim()) return true;
+      const q = ordersSearchTerm.toLowerCase();
+      const numMatch = (item.orderNumber || '').toLowerCase().includes(q);
+      const clientMatch = (item.clientName || '').toLowerCase().includes(q);
+      const dateMatch = (item.date || '').toLowerCase().includes(q);
+      const priorityMatch = (item.priority || '').toLowerCase().includes(q);
+      return numMatch || clientMatch || dateMatch || priorityMatch;
+    });
+
+    list.sort((a, b) => {
+      let valA: any = a[ordersSortField];
+      let valB: any = b[ordersSortField];
+
+      if (ordersSortField === 'orderNumber' || ordersSortField === 'clientName' || ordersSortField === 'date' || ordersSortField === 'priority') {
+        return ordersSortOrder === 'asc'
+          ? String(valA || '').localeCompare(String(valB || ''), undefined, { numeric: true })
+          : String(valB || '').localeCompare(String(valA || ''), undefined, { numeric: true });
+      }
+
+      const numA = Number(valA) || 0;
+      const numB = Number(valB) || 0;
+      return ordersSortOrder === 'asc' ? numA - numB : numB - numA;
+    });
+
+    return list;
+  }, [currentModalOrdersSummary, ordersSearchTerm, ordersSortField, ordersSortOrder]);
+
+  const copyOrdersDetailsToClipboard = () => {
+    if (!ordersModalData) return;
+    let text = `PEDIDOS EM ABERTO (A SAIR) - ${ordersModalData.productCode} (${ordersModalData.productName})\n`;
+    text += `Total a Sair: ${currentModalOrdersSummary.totalQtyOrdered.toLocaleString('pt-BR')} un em ${currentModalOrdersSummary.ordersCount} pedidos\n`;
+    text += `Estoque Físico Total: ${currentModalPhysicalStock.toLocaleString('pt-BR')} un\n`;
+    text += `Saldo Disponível Líquido: ${(currentModalPhysicalStock - currentModalOrdersSummary.totalQtyOrdered).toLocaleString('pt-BR')} un\n\n`;
+    text += `Nº Pedido\tCliente\tData\tPrioridade\tQtd Solicitada\tPreço Unit.\tValor Total\n`;
+    filteredModalOrders.forEach(ord => {
+      text += `${ord.orderNumber}\t${ord.clientName}\t${ord.date}\t${ord.priority}\t${ord.quantityOrdered}\t${ord.unitPrice}\t${ord.totalPrice}\n`;
+    });
+    navigator.clipboard.writeText(text);
+    setCopiedOrdersData(true);
+    setTimeout(() => setCopiedOrdersData(false), 2000);
+  };
 
   // Helper to handle product selection change and auto-populate product properties
   const handleProductChange = (prodCode: string) => {
@@ -903,134 +1366,142 @@ export default function StockTable({
   return (
     <div className="space-y-4">
       {/* Search and Filters and Action Button */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-3.5">
         
-        <div className="flex flex-col md:flex-row gap-3 flex-1">
-          {/* Search Bar */}
-          <div className="relative flex-1 max-w-md">
-            <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search className="h-4 w-4 text-slate-400" />
-            </span>
-            <input
-              type="text"
-              placeholder="Buscar por código ou nome do produto..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
-            />
-          </div>
-
-          {/* Warehouse Dropdown Filter */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-slate-500 flex items-center gap-1">
-              <Building className="h-4 w-4" />
-              Filtrar Depósito:
-            </span>
-            <select
-              value={selectedWarehouseFilter}
-              onChange={(e) => setSelectedWarehouseFilter(e.target.value)}
-              className="border border-slate-300 rounded-lg text-sm bg-white px-3 py-1.5 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
+        {/* Row 1: Dedicated Search Bar (Full Width) */}
+        <div className="relative w-full">
+          <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+            <Search className="h-4 w-4 text-slate-400" />
+          </span>
+          <input
+            type="text"
+            placeholder="Buscar por código ou nome do produto em todo o estoque..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-10 py-2.5 bg-slate-50/60 hover:bg-slate-50 focus:bg-white border border-slate-200 focus:border-indigo-500 rounded-lg text-sm text-slate-800 placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 transition-all shadow-2xs"
+          />
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={() => setSearchTerm('')}
+              className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+              title="Limpar busca"
             >
-              <option value="Todos">Todos os Depósitos</option>
-              {allWarehouses.map(wh => (
-                <option key={wh} value={wh}>{wh}</option>
-              ))}
-            </select>
-          </div>
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
-        {/* Add/Manage Buttons */}
-        <div className="flex flex-col sm:flex-row items-center gap-2 shrink-0">
-          {/* View Mode Toggle */}
-          <div className="flex border border-slate-200 rounded-lg p-0.5 bg-slate-50 items-center">
+        {/* Row 2: Warehouse Filter (Left) & Actions (Right) */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-2.5 border-t border-slate-100">
+          {/* Warehouse Dropdown Filter & Open Orders Filter */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center">
+              <select
+                id="select-group-filter"
+                value={selectedWarehouseFilter}
+                onChange={(e) => setSelectedWarehouseFilter(e.target.value)}
+                aria-label="Filtrar por Grupo"
+                className="border border-slate-300 rounded-lg text-sm bg-white px-3 py-1.5 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 cursor-pointer text-slate-700 font-medium"
+              >
+                <option value="Todos">Todos os Grupos ({activeGroups.length})</option>
+                {activeGroups.map(grp => (
+                  <option key={grp} value={grp}>{grp}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filter by Open Orders Chip */}
             <button
               type="button"
-              onClick={() => setViewMode('consolidated')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-                viewMode === 'consolidated'
-                  ? 'bg-white text-indigo-700 shadow-sm border border-slate-100'
-                  : 'text-slate-500 hover:text-slate-800'
+              onClick={() => setFilterOnlyWithOpenOrders(!filterOnlyWithOpenOrders)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                filterOnlyWithOpenOrders
+                  ? 'bg-amber-100 text-amber-950 border-amber-300 shadow-2xs ring-1 ring-amber-400/50'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
               }`}
+              title="Filtrar somente produtos que possuem pedidos em aberto (a sair)"
             >
-              Consolidado por Grupo
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('detailed')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-                viewMode === 'detailed'
-                  ? 'bg-white text-indigo-700 shadow-sm border border-slate-100'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              Detalhado por Lote
+              <Truck className={`h-3.5 w-3.5 ${filterOnlyWithOpenOrders ? 'text-amber-700' : 'text-slate-400'}`} />
+              <span>Apenas com Pedidos a Sair</span>
+              {totalProductsWithOrdersCount > 0 && (
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                  filterOnlyWithOpenOrders ? 'bg-amber-200 text-amber-900' : 'bg-slate-100 text-slate-600'
+                }`}>
+                  {totalProductsWithOrdersCount}
+                </span>
+              )}
             </button>
           </div>
 
-          <button
-            onClick={() => setIsWhManagementOpen(true)}
-            className="flex items-center justify-center gap-2 border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer"
-            title="Visualizar ou pré-cadastrar depósitos do sistema"
-          >
-            <Building className="h-4 w-4 text-slate-500" />
-            <span>{canManageStock ? 'Gerenciar Depósitos' : 'Ver Depósitos'}</span>
-          </button>
-          
-          {canManageStock ? (
-            <>
-              <button
-                id="btn-update-stock"
-                onClick={handleExecuteUpdate}
-                disabled={isUpdating}
-                className={`flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg shadow-sm transition-all cursor-pointer border ${
-                  isUpdating 
-                    ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
-                    : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500 hover:shadow-indigo-500/10'
-                }`}
-                title="Apagar dados locais e atualizar importando os dados reais através do Webhook configurado"
-              >
-                {isUpdating ? (
-                  <>
-                    <svg className="animate-spin h-4 w-4 text-emerald-600" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    <span>Atualizando...</span>
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="h-4 w-4" />
-                    <span>Atualizar</span>
-                  </>
-                )}
-              </button>
-
-              {stock.length > 0 && (
+          {/* Add/Manage Buttons */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              id="btn-warehouse-management"
+              onClick={() => setIsWhManagementOpen(true)}
+              className="flex items-center justify-center gap-2 border border-slate-300 hover:bg-slate-50 text-slate-700 px-3.5 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer"
+              title="Visualizar ou pré-cadastrar depósitos do sistema"
+            >
+              <Building className="h-4 w-4 text-slate-500" />
+              <span>Cadastro</span>
+            </button>
+            
+            {canManageStock ? (
+              <>
                 <button
-                  id="btn-clear-all-stock"
-                  onClick={() => setIsClearAllConfirmOpen(true)}
-                  className="flex items-center justify-center gap-2 border border-rose-200 text-rose-700 hover:bg-rose-50 px-4 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer"
-                  title="Excluir todos os saldos de estoque do sistema"
+                  id="btn-update-stock"
+                  onClick={handleExecuteUpdate}
+                  disabled={isUpdating}
+                  className={`flex items-center justify-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg shadow-sm transition-all cursor-pointer border ${
+                    isUpdating 
+                      ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500 hover:shadow-indigo-500/10'
+                  }`}
+                  title="Apagar dados locais e atualizar importando os dados reais através do Webhook configurado"
                 >
-                  <Trash2 className="h-4 w-4 text-rose-500" />
-                  <span>Excluir Todos os Saldos</span>
+                  {isUpdating ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4 text-emerald-600" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      <span>Atualizando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-4 w-4" />
+                      <span>Atualizar</span>
+                    </>
+                  )}
                 </button>
-              )}
-              <button
-                id="btn-add-stock-balance"
-                onClick={handleOpenAddModal}
-                className="flex items-center justify-center gap-2 bg-indigo-600 text-white hover:bg-indigo-700 px-4 py-2 text-sm font-semibold rounded-lg shadow-sm transition-colors cursor-pointer"
-              >
-                <Plus className="h-4 w-4" />
-                Lançar Saldo de Estoque
-              </button>
-            </>
-          ) : (
-            <div className="flex items-center gap-1.5 px-3 py-2 bg-slate-50 border border-slate-200 text-slate-400 text-xs font-semibold rounded-lg select-none">
-              <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
-              <span>Apenas visualização do estoque</span>
-            </div>
-          )}
+
+                {stock.length > 0 && (
+                  <button
+                    id="btn-clear-all-stock"
+                    onClick={() => setIsClearAllConfirmOpen(true)}
+                    className="flex items-center justify-center gap-2 border border-rose-200 text-rose-700 hover:bg-rose-50 px-3.5 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer"
+                    title="Excluir todos os saldos de estoque do sistema"
+                  >
+                    <Trash2 className="h-4 w-4 text-rose-500" />
+                    <span>Excluir</span>
+                  </button>
+                )}
+                <button
+                  id="btn-add-stock-balance"
+                  onClick={handleOpenAddModal}
+                  className="flex items-center justify-center gap-2 bg-indigo-600 text-white hover:bg-indigo-700 px-3.5 py-2 text-sm font-semibold rounded-lg shadow-sm transition-colors cursor-pointer"
+                >
+                  <Plus className="h-4 w-4" />
+                  Lançar
+                </button>
+              </>
+            ) : (
+              <div className="flex items-center gap-1.5 px-3 py-2 bg-slate-50 border border-slate-200 text-slate-400 text-xs font-semibold rounded-lg select-none">
+                <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
+                <span>Apenas visualização do estoque</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1083,13 +1554,25 @@ export default function StockTable({
                 <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase bg-slate-50">
                   <th className="px-6 py-3.5 whitespace-nowrap min-w-[120px]">Código (SKU)</th>
                   <th className="px-6 py-3.5 min-w-[200px]">Produto</th>
-                  {activeGroups.map(grp => (
+                  <th className="px-4 py-2 border-l border-slate-200 bg-amber-50/60 text-center min-w-[150px]">
+                    <span className="text-xs font-bold text-amber-950 block border-b border-amber-200 pb-1 mb-1">
+                      Pedidos em Aberto
+                    </span>
+                    <div className="flex items-center justify-center gap-1 text-[10px] text-amber-800 tracking-wider font-semibold">
+                      <Truck className="h-3 w-3 text-amber-600 shrink-0" />
+                      <span>Total a Sair</span>
+                    </div>
+                  </th>
+                  {displayedGroups.map(grp => (
                     <th key={grp} colSpan={3} className="px-6 py-2 border-l border-slate-200 bg-indigo-50/10 text-center">
                       <span className="text-xs font-bold text-indigo-900 block border-b border-indigo-100/60 pb-1 mb-1">
                         {grp} = {"$ " + (groupTotals[grp] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                       <div className="grid grid-cols-3 gap-2 text-[10px] text-slate-500 tracking-wider font-semibold">
-                        <span>Quantidade</span>
+                        <span className="inline-flex items-center justify-center gap-1 text-indigo-800" title="Dê dois cliques no número da quantidade para detalhar por lote">
+                          Quantidade
+                          <Layers className="h-2.5 w-2.5 text-indigo-500 shrink-0" />
+                        </span>
                         <span>Preço Unit Médio</span>
                         <span>Vr Total Médio</span>
                       </div>
@@ -1099,6 +1582,7 @@ export default function StockTable({
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
                 {groupedStock.map((row) => {
+                  const ordersSummary = getProductOrdersSummary(row.productCode);
                   return (
                     <tr key={row.productCode} className="hover:bg-slate-50/50 transition-colors">
                       {/* Product Code */}
@@ -1111,19 +1595,72 @@ export default function StockTable({
                         {row.productName}
                       </td>
 
+                      {/* Pedidos em Aberto (A Sair) */}
+                      <td className="px-4 py-3 border-l border-slate-200 align-middle text-center bg-amber-50/15">
+                        {ordersSummary.totalQtyOrdered > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenOrdersModal(row.productCode, row.productName)}
+                            title={`Clique para listar os ${ordersSummary.ordersCount} pedidos em aberto de ${row.productCode} (${ordersSummary.totalQtyOrdered} un a sair)`}
+                            className="inline-flex flex-col items-center justify-center py-1.5 px-3 rounded-lg bg-amber-100/90 hover:bg-amber-200/90 text-amber-950 border border-amber-300 shadow-2xs hover:shadow-xs transition-all cursor-pointer group active:scale-95 mx-auto"
+                          >
+                            <div className="flex items-center gap-1.5 font-mono font-bold text-xs text-amber-950">
+                              <Truck className="h-3.5 w-3.5 text-amber-700 shrink-0 group-hover:translate-x-0.5 transition-transform" />
+                              <span className="text-sm font-black tracking-tight">{ordersSummary.totalQtyOrdered.toLocaleString('pt-BR')}</span>
+                              <span className="text-[10px] text-amber-800 font-semibold">un</span>
+                            </div>
+                            <span className="text-[10px] font-medium text-amber-800 group-hover:underline flex items-center gap-0.5 mt-0.5">
+                              <span>{ordersSummary.ordersCount} {ordersSummary.ordersCount === 1 ? 'pedido' : 'pedidos'}</span>
+                              <ArrowUpRight className="h-2.5 w-2.5 opacity-60" />
+                            </span>
+                          </button>
+                        ) : (
+                          <span className="font-mono text-xs text-slate-300 select-none">0 un</span>
+                        )}
+                      </td>
+
                       {/* Groups */}
-                      {activeGroups.map(grp => {
+                      {displayedGroups.map(grp => {
                         const data = row.groups[grp] || { quantity: 0, sumPrPrecoTimesQty: 0, sumVlrestTimesQty: 0 };
                         const avgPrice = data.quantity > 0 ? data.sumPrPrecoTimesQty / data.quantity : 0;
                         const totalVal = avgPrice * data.quantity;
+                        const hasQty = data.quantity > 0;
 
                         return (
-                          <td key={grp} colSpan={3} className="px-6 py-4 border-l border-slate-150 align-middle">
+                          <td 
+                            key={grp} 
+                            colSpan={3} 
+                            onDoubleClick={() => {
+                              if (hasQty) {
+                                handleOpenBatchModal(row.productCode, row.productName, grp);
+                              }
+                            }}
+                            className={`px-6 py-4 border-l border-slate-150 align-middle transition-colors ${
+                              hasQty ? 'hover:bg-indigo-50/40' : ''
+                            }`}
+                          >
                             <div className="grid grid-cols-3 gap-2 items-center text-center">
                               {/* Quantity */}
-                              <div className="font-mono font-bold text-slate-800">
-                                {data.quantity > 0 ? (
-                                  <span>{data.quantity} <span className="text-[10px] text-slate-400 font-normal">un</span></span>
+                              <div 
+                                onDoubleClick={(e) => {
+                                  e.stopPropagation();
+                                  if (hasQty) {
+                                    handleOpenBatchModal(row.productCode, row.productName, grp);
+                                  }
+                                }}
+                                title={hasQty ? `Duplo clique para abrir o saldo por lote de ${row.productCode} em ${grp}` : undefined}
+                                className={`font-mono font-bold select-none transition-all inline-flex items-center justify-center gap-1 mx-auto py-1 px-2 rounded-md ${
+                                  hasQty 
+                                    ? 'text-indigo-900 bg-indigo-50/70 hover:bg-indigo-100 hover:text-indigo-700 cursor-pointer border border-indigo-200/80 shadow-2xs group/qty active:scale-95' 
+                                    : 'text-slate-300'
+                                }`}
+                              >
+                                {hasQty ? (
+                                  <>
+                                    <span>{data.quantity.toLocaleString('pt-BR')}</span>
+                                    <span className="text-[10px] text-indigo-500/80 font-normal">un</span>
+                                    <Layers className="h-3 w-3 text-indigo-500 opacity-60 group-hover/qty:opacity-100 transition-opacity ml-0.5 shrink-0" />
+                                  </>
                                 ) : (
                                   <span className="text-slate-300">0</span>
                                 )}
@@ -1161,6 +1698,7 @@ export default function StockTable({
                 <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase bg-slate-50">
                   <th className="px-6 py-3.5">Código (SKU)</th>
                   <th className="px-6 py-3.5">Produto</th>
+                  <th className="px-4 py-3.5 text-center bg-amber-50/50 min-w-[130px]">Pedidos em Aberto</th>
                   <th className="px-6 py-3.5">Depósito</th>
                   <th className="px-6 py-3.5">Cód. Interno</th>
                   <th className="px-6 py-3.5">Cód. Estruturado</th>
@@ -1196,11 +1734,43 @@ export default function StockTable({
                         {item.productName}
                       </td>
 
+                      {/* Pedidos em Aberto */}
+                      <td className="px-4 py-4 align-middle text-center bg-amber-50/15">
+                        {(() => {
+                          const ordSummary = getProductOrdersSummary(item.productCode);
+                          if (ordSummary.totalQtyOrdered > 0) {
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenOrdersModal(item.productCode, item.productName)}
+                                title={`Clique para listar os ${ordSummary.ordersCount} pedidos em aberto de ${item.productCode}`}
+                                className="inline-flex items-center gap-1.5 py-1 px-2.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 font-mono text-xs font-bold transition-colors cursor-pointer"
+                              >
+                                <Truck className="h-3.5 w-3.5 text-amber-700 shrink-0" />
+                                <span>{ordSummary.totalQtyOrdered.toLocaleString('pt-BR')} un</span>
+                              </button>
+                            );
+                          }
+                          return <span className="font-mono text-xs text-slate-300 select-none">0 un</span>;
+                        })()}
+                      </td>
+
                       {/* Warehouse */}
                       <td className="px-6 py-4 text-slate-600">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <Building className="h-4 w-4 text-slate-400 shrink-0" />
-                          <span>{item.warehouse}</span>
+                          <span className="font-medium text-slate-800">{item.warehouse}</span>
+                          {(() => {
+                            const grp = getWarehouseGroup(item.warehouse);
+                            if (grp && grp !== 'Outros' && grp !== 'Inativo') {
+                              return (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                                  {grp}
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
                         </div>
                       </td>
 
@@ -1995,6 +2565,765 @@ export default function StockTable({
                 type="button"
                 onClick={() => setIsLogModalOpen(false)}
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL - DETALHAMENTO DE SALDO POR LOTE */}
+      {batchModalData?.isOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-[120] p-4 animate-in fade-in duration-200"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) handleCloseBatchModal();
+          }}
+        >
+          <div 
+            id="modal-batch-balance"
+            className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-4xl w-full overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-150"
+          >
+            {/* Modal Header */}
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="p-1.5 bg-indigo-100 text-indigo-700 rounded-lg shrink-0">
+                    <Layers className="h-5 w-5" />
+                  </div>
+                  <h3 className="font-bold text-slate-800 text-lg">
+                    Saldo Detalhado por Lote
+                  </h3>
+                  <span className="font-mono text-xs font-bold px-2.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    SKU: {batchModalData.productCode}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-blue-800 border border-blue-200">
+                    <Building className="h-3.5 w-3.5 text-blue-600" />
+                    Depósito: {batchModalData.groupName}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 pl-9 font-medium">
+                  {batchModalData.productName}
+                </p>
+              </div>
+
+              <button 
+                id="btn-close-batch-modal"
+                onClick={handleCloseBatchModal}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-lg transition-colors cursor-pointer shrink-0"
+                title="Fechar modal (Esc)"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* KPI Summary Cards */}
+            <div className="p-6 pb-3 border-b border-slate-100 bg-slate-50/40">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Saldo Total no Grupo</span>
+                  <div className="mt-1 flex items-baseline gap-1">
+                    <span className="text-xl font-bold font-mono text-indigo-900">
+                      {batchMetrics.totalQty.toLocaleString('pt-BR')}
+                    </span>
+                    <span className="text-xs text-slate-500 font-medium">un</span>
+                  </div>
+                </div>
+
+                <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Total de Lotes</span>
+                  <div className="mt-1 flex items-baseline gap-1">
+                    <span className="text-xl font-bold font-mono text-emerald-800">
+                      {batchMetrics.lotCount}
+                    </span>
+                    <span className="text-xs text-slate-500 font-medium">{batchMetrics.lotCount === 1 ? 'lote' : 'lotes'}</span>
+                  </div>
+                </div>
+
+                <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Preço Médio Ponderado</span>
+                  <div className="mt-1">
+                    <span className="text-xl font-bold font-mono text-slate-800">
+                      $ {batchMetrics.avgPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Valor Total em Estoque</span>
+                  <div className="mt-1">
+                    <span className="text-xl font-bold font-mono text-blue-700">
+                      $ {batchMetrics.totalVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sub-toolbar: Search & Actions */}
+              <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="relative flex-1 max-w-md">
+                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    placeholder="Filtrar por lote, armazém, código interno..."
+                    value={batchSearchTerm}
+                    onChange={(e) => setBatchSearchTerm(e.target.value)}
+                    className="w-full pl-9 pr-8 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
+                  />
+                  {batchSearchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setBatchSearchTerm('')}
+                      className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    id="btn-copy-batch-data"
+                    type="button"
+                    onClick={copyBatchDetailsToClipboard}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition-colors cursor-pointer"
+                    title="Copiar lista de lotes para a área de transferência"
+                  >
+                    {copiedBatchData ? (
+                      <>
+                        <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        <span className="text-emerald-700">Lotes Copiados!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3.5 w-3.5 text-slate-500" />
+                        <span>Copiar Lotes</span>
+                      </>
+                    )}
+                  </button>
+                  <span className="text-[11px] text-slate-500">
+                    {filteredBatchItems.length} de {batchModalItems.length} {batchModalItems.length === 1 ? 'registro' : 'registros'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Table of Batches */}
+            <div className="overflow-y-auto max-h-[50vh] p-6 pt-2">
+              <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 text-slate-600 uppercase font-semibold text-[11px]">
+                    <tr>
+                      <th className="px-4 py-3 text-center w-12">#</th>
+                      <th 
+                        className="px-4 py-3 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                        onClick={() => {
+                          if (batchSortField === 'lote') setBatchSortOrder(batchSortOrder === 'asc' ? 'desc' : 'asc');
+                          else { setBatchSortField('lote'); setBatchSortOrder('asc'); }
+                        }}
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>Lote / Marca</span>
+                          <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th 
+                        className="px-4 py-3 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                        onClick={() => {
+                          if (batchSortField === 'warehouse') setBatchSortOrder(batchSortOrder === 'asc' ? 'desc' : 'asc');
+                          else { setBatchSortField('warehouse'); setBatchSortOrder('asc'); }
+                        }}
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>Depósito</span>
+                          <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th className="px-4 py-3">Cód. Estruturado</th>
+                      <th className="px-4 py-3">Cód. Interno</th>
+                      <th 
+                        className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                        onClick={() => {
+                          if (batchSortField === 'quantity') setBatchSortOrder(batchSortOrder === 'asc' ? 'desc' : 'asc');
+                          else { setBatchSortField('quantity'); setBatchSortOrder('desc'); }
+                        }}
+                      >
+                        <div className="flex items-center justify-end gap-1">
+                          <span>Quantidade (Saldo)</span>
+                          <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th 
+                        className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                        onClick={() => {
+                          if (batchSortField === 'pr_preco') setBatchSortOrder(batchSortOrder === 'asc' ? 'desc' : 'asc');
+                          else { setBatchSortField('pr_preco'); setBatchSortOrder('desc'); }
+                        }}
+                      >
+                        <div className="flex items-center justify-end gap-1">
+                          <span>Preço Unitário</span>
+                          <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th 
+                        className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                        onClick={() => {
+                          if (batchSortField === 'vlrest') setBatchSortOrder(batchSortOrder === 'asc' ? 'desc' : 'asc');
+                          else { setBatchSortField('vlrest'); setBatchSortOrder('desc'); }
+                        }}
+                      >
+                        <div className="flex items-center justify-end gap-1">
+                          <span>Valor Total</span>
+                          <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                        </div>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredBatchItems.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="px-6 py-10 text-center text-slate-400">
+                          <Package className="h-8 w-8 mx-auto mb-2 text-slate-300" />
+                          <p className="font-semibold">Nenhum lote localizado</p>
+                          <p className="text-[11px] text-slate-400 mt-0.5">Tente alterar os termos da busca acima.</p>
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredBatchItems.map((item, idx) => {
+                        const pr = item.pr_preco !== undefined ? item.pr_preco : 0;
+                        const vl = item.vlrest !== undefined ? item.vlrest : (item.quantity * pr);
+                        const pctOfGroup = batchMetrics.totalQty > 0 
+                          ? ((item.quantity / batchMetrics.totalQty) * 100).toFixed(1)
+                          : '0.0';
+
+                        return (
+                          <tr key={item.id || idx} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="px-4 py-3 text-center text-slate-400 font-mono text-[10px]">
+                              {idx + 1}
+                            </td>
+
+                            {/* Lote */}
+                            <td className="px-4 py-3">
+                              <span className="font-mono font-bold text-xs bg-slate-100 text-slate-800 px-2.5 py-1 rounded-md border border-slate-200 inline-flex items-center gap-1.5 shadow-2xs">
+                                <Tag className="h-3 w-3 text-indigo-500" />
+                                {item.lote && item.lote.trim() ? item.lote : <span className="text-slate-400 italic">Sem lote</span>}
+                              </span>
+                            </td>
+
+                            {/* Depósito */}
+                            <td className="px-4 py-3 font-mono text-slate-700">
+                              <div className="flex items-center gap-1.5">
+                                <Building className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                                <span className="font-semibold">{item.warehouse}</span>
+                              </div>
+                            </td>
+
+                            {/* Código Estruturado */}
+                            <td className="px-4 py-3 font-mono text-slate-600">
+                              {item.codigo || '-'}
+                            </td>
+
+                            {/* pr_cod */}
+                            <td className="px-4 py-3 font-mono text-slate-600">
+                              {item.pr_cod !== undefined ? item.pr_cod : '-'}
+                            </td>
+
+                            {/* Quantidade */}
+                            <td className="px-4 py-3 text-right">
+                              <div className="flex flex-col items-end">
+                                <div className="font-mono font-bold text-slate-900 text-sm">
+                                  {item.quantity.toLocaleString('pt-BR')} <span className="text-[10px] text-slate-400 font-normal">un</span>
+                                </div>
+                                <div className="w-20 bg-slate-100 rounded-full h-1.5 mt-1 overflow-hidden">
+                                  <div 
+                                    className="bg-indigo-600 h-1.5 rounded-full" 
+                                    style={{ width: `${Math.min(100, Math.max(4, Number(pctOfGroup)))}%` }}
+                                  />
+                                </div>
+                                <span className="text-[10px] text-slate-400 font-mono mt-0.5">{pctOfGroup}% do grupo</span>
+                              </div>
+                            </td>
+
+                            {/* Preço Unit */}
+                            <td className="px-4 py-3 text-right font-mono text-emerald-700 font-semibold">
+                              $ {pr.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                            </td>
+
+                            {/* Valor Total */}
+                            <td className="px-4 py-3 text-right font-mono text-blue-700 font-bold">
+                              $ {vl.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+
+                  {/* Summary Footer of the table */}
+                  {filteredBatchItems.length > 0 && (
+                    <tfoot className="bg-slate-50 border-t-2 border-slate-300 font-semibold text-slate-800 text-xs">
+                      <tr>
+                        <td colSpan={5} className="px-4 py-3 text-right uppercase tracking-wider text-[11px] text-slate-600 font-bold">
+                          Subtotal dos Lotes Listados ({filteredBatchItems.length} registros):
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-bold text-indigo-950 text-sm">
+                          {filteredBatchItems.reduce((acc, curr) => acc + curr.quantity, 0).toLocaleString('pt-BR')} un
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono text-emerald-800 text-xs">
+                          {(() => {
+                            const subQty = filteredBatchItems.reduce((acc, curr) => acc + curr.quantity, 0);
+                            const subVal = filteredBatchItems.reduce((acc, curr) => acc + (curr.vlrest !== undefined ? curr.vlrest : (curr.quantity * (curr.pr_preco || 0))), 0);
+                            const subAvg = subQty > 0 ? (subVal / subQty) : 0;
+                            return `$ ${subAvg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+                          })()}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-bold text-blue-800 text-sm">
+                          $ {filteredBatchItems.reduce((acc, curr) => acc + (curr.vlrest !== undefined ? curr.vlrest : (curr.quantity * (curr.pr_preco || 0))), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                <Info className="h-4 w-4 text-indigo-500 shrink-0" />
+                <span>Dê duplo clique em qualquer saldo na tabela principal para abrir este detalhamento.</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseBatchModal}
+                className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer shadow-xs"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Open Orders Breakdown Modal ("Pedidos em Aberto (A Sair)") */}
+      {ordersModalData?.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
+            
+            {/* Modal Header */}
+            <div className="px-6 py-4.5 bg-linear-to-r from-amber-50 via-amber-50/70 to-orange-50/40 border-b border-amber-200/80 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-100 border border-amber-300 rounded-xl text-amber-800 shadow-xs">
+                  <Truck className="h-6 w-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-base font-bold text-amber-950">
+                      Pedidos em Aberto (A Sair)
+                    </h3>
+                    <span className="font-mono text-xs font-bold text-amber-900 bg-amber-200/80 px-2 py-0.5 rounded-md border border-amber-300">
+                      {ordersModalData.productCode}
+                    </span>
+                  </div>
+                  <p className="text-xs text-amber-800/90 mt-0.5 font-medium">
+                    {ordersModalData.productName}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCloseOrdersModal}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                title="Fechar (Esc)"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Metrics Dashboard Cards */}
+            <div className="p-5 bg-slate-50/70 border-b border-slate-200 grid grid-cols-2 md:grid-cols-4 gap-3.5">
+              {/* Total Ordered / Outgoing */}
+              <div className="bg-white p-3.5 rounded-xl border border-amber-200/80 shadow-2xs">
+                <div className="flex items-center justify-between text-xs text-amber-800 font-semibold mb-1">
+                  <span>Total a Sair</span>
+                  <Truck className="h-4 w-4 text-amber-600" />
+                </div>
+                <div className="font-mono text-xl font-black text-amber-950">
+                  {currentModalOrdersSummary.totalQtyOrdered.toLocaleString('pt-BR')} <span className="text-xs font-normal text-amber-800">un</span>
+                </div>
+                <div className="text-[11px] text-amber-800 font-medium mt-1">
+                  Em {currentModalOrdersSummary.ordersCount} {currentModalOrdersSummary.ordersCount === 1 ? 'pedido em aberto' : 'pedidos em aberto'}
+                </div>
+              </div>
+
+              {/* Physical Stock Total */}
+              <div className="bg-white p-3.5 rounded-xl border border-indigo-200/80 shadow-2xs">
+                <div className="flex items-center justify-between text-xs text-indigo-800 font-semibold mb-1">
+                  <span>Estoque Físico Total</span>
+                  <Package className="h-4 w-4 text-indigo-600" />
+                </div>
+                <div className="font-mono text-xl font-black text-indigo-950">
+                  {currentModalPhysicalStock.toLocaleString('pt-BR')} <span className="text-xs font-normal text-indigo-800">un</span>
+                </div>
+                <div className="text-[11px] text-indigo-700 font-medium mt-1">
+                  Soma de todos os depósitos
+                </div>
+              </div>
+
+              {/* Net Available Stock */}
+              <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                <div className="flex items-center justify-between text-xs text-slate-600 font-semibold mb-1">
+                  <span>Saldo Disponível Líquido</span>
+                  <Layers className="h-4 w-4 text-slate-500" />
+                </div>
+                <div className={`font-mono text-xl font-black ${
+                  (currentModalPhysicalStock - currentModalOrdersSummary.totalQtyOrdered) >= 0
+                    ? 'text-emerald-700'
+                    : 'text-rose-700'
+                }`}>
+                  {(currentModalPhysicalStock - currentModalOrdersSummary.totalQtyOrdered).toLocaleString('pt-BR')} <span className="text-xs font-normal text-slate-500">un</span>
+                </div>
+                <div className="mt-1 flex items-center gap-1">
+                  {(currentModalPhysicalStock - currentModalOrdersSummary.totalQtyOrdered) >= 0 ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Estoque Suficiente
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                      <AlertCircle className="h-3 w-3" />
+                      Déficit de Estoque
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Total Order Value */}
+              <div className="bg-white p-3.5 rounded-xl border border-emerald-200/80 shadow-2xs">
+                <div className="flex items-center justify-between text-xs text-emerald-800 font-semibold mb-1">
+                  <span>Valor Total Pedidos</span>
+                  <Tag className="h-4 w-4 text-emerald-600" />
+                </div>
+                <div className="font-mono text-lg font-black text-emerald-950">
+                  $ {filteredModalOrders.reduce((acc, o) => acc + o.totalPrice, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <div className="text-[11px] text-emerald-800 font-medium mt-1">
+                  {filteredModalOrders.length} {filteredModalOrders.length === 1 ? 'pedido listado' : 'pedidos listados'}
+                </div>
+              </div>
+            </div>
+
+            {/* Filter and Action Bar */}
+            <div className="px-6 py-3 bg-white border-b border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="relative w-full sm:w-80">
+                <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Buscar por pedido, cliente..."
+                  value={ordersSearchTerm}
+                  onChange={(e) => setOrdersSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-8 py-1.5 text-xs bg-slate-50 hover:bg-slate-100/70 focus:bg-white border border-slate-200 rounded-lg text-slate-800 placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-all"
+                />
+                {ordersSearchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setOrdersSearchTerm('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                {onNavigateToOrders && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleCloseOrdersModal();
+                      onNavigateToOrders();
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-lg border border-indigo-200 transition-colors cursor-pointer"
+                    title="Navegar para a aba completa de Pedidos"
+                  >
+                    <ArrowUpRight className="h-3.5 w-3.5" />
+                    <span>Ver na Tela de Pedidos</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={copyOrdersDetailsToClipboard}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200/80 text-slate-700 text-xs font-semibold rounded-lg border border-slate-200 transition-colors cursor-pointer"
+                  title="Copiar lista de pedidos para a área de transferência"
+                >
+                  {copiedOrdersData ? (
+                    <>
+                      <Check className="h-3.5 w-3.5 text-emerald-600" />
+                      <span className="text-emerald-700">Copiado!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3.5 w-3.5" />
+                      <span>Copiar Lista</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Orders Table Container */}
+            <div className="flex-1 overflow-auto p-6">
+              <div className="border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase tracking-wider text-[11px]">
+                      <th className="px-3.5 py-2.5 text-center w-12">#</th>
+                      <th 
+                        className="px-4 py-2.5 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                        onClick={() => {
+                          if (ordersSortField === 'orderNumber') {
+                            setOrdersSortOrder(ordersSortOrder === 'asc' ? 'desc' : 'asc');
+                          } else {
+                            setOrdersSortField('orderNumber');
+                            setOrdersSortOrder('asc');
+                          }
+                        }}
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>Nº Pedido</span>
+                          <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th 
+                        className="px-4 py-2.5 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                        onClick={() => {
+                          if (ordersSortField === 'clientName') {
+                            setOrdersSortOrder(ordersSortOrder === 'asc' ? 'desc' : 'asc');
+                          } else {
+                            setOrdersSortField('clientName');
+                            setOrdersSortOrder('asc');
+                          }
+                        }}
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>Cliente</span>
+                          <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th 
+                        className="px-4 py-2.5 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                        onClick={() => {
+                          if (ordersSortField === 'date') {
+                            setOrdersSortOrder(ordersSortOrder === 'asc' ? 'desc' : 'asc');
+                          } else {
+                            setOrdersSortField('date');
+                            setOrdersSortOrder('desc');
+                          }
+                        }}
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>Data</span>
+                          <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th 
+                        className="px-4 py-2.5 text-center cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                        onClick={() => {
+                          if (ordersSortField === 'priority') {
+                            setOrdersSortOrder(ordersSortOrder === 'asc' ? 'desc' : 'asc');
+                          } else {
+                            setOrdersSortField('priority');
+                            setOrdersSortOrder('asc');
+                          }
+                        }}
+                      >
+                        <div className="flex items-center justify-center gap-1">
+                          <span>Prioridade</span>
+                          <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th 
+                        className="px-4 py-2.5 text-right cursor-pointer hover:bg-amber-100/50 bg-amber-50/40 text-amber-950 transition-colors select-none"
+                        onClick={() => {
+                          if (ordersSortField === 'quantityOrdered') {
+                            setOrdersSortOrder(ordersSortOrder === 'asc' ? 'desc' : 'asc');
+                          } else {
+                            setOrdersSortField('quantityOrdered');
+                            setOrdersSortOrder('desc');
+                          }
+                        }}
+                      >
+                        <div className="flex items-center justify-end gap-1 font-bold">
+                          <span>Qtd Solicitada</span>
+                          <ArrowUpDown className="h-3 w-3 text-amber-700" />
+                        </div>
+                      </th>
+                      <th 
+                        className="px-4 py-2.5 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                        onClick={() => {
+                          if (ordersSortField === 'unitPrice') {
+                            setOrdersSortOrder(ordersSortOrder === 'asc' ? 'desc' : 'asc');
+                          } else {
+                            setOrdersSortField('unitPrice');
+                            setOrdersSortOrder('desc');
+                          }
+                        }}
+                      >
+                        <div className="flex items-center justify-end gap-1">
+                          <span>Preço Unit.</span>
+                          <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th 
+                        className="px-4 py-2.5 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                        onClick={() => {
+                          if (ordersSortField === 'totalPrice') {
+                            setOrdersSortOrder(ordersSortOrder === 'asc' ? 'desc' : 'asc');
+                          } else {
+                            setOrdersSortField('totalPrice');
+                            setOrdersSortOrder('desc');
+                          }
+                        }}
+                      >
+                        <div className="flex items-center justify-end gap-1">
+                          <span>Valor Total</span>
+                          <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                        </div>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-slate-700">
+                    {filteredModalOrders.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="px-6 py-10 text-center text-slate-400">
+                          <Truck className="h-8 w-8 text-slate-300 mx-auto mb-2" />
+                          <p className="font-medium text-sm">Nenhum pedido em aberto encontrado com os critérios.</p>
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredModalOrders.map((ord, idx) => {
+                        const totalReq = currentModalOrdersSummary.totalQtyOrdered;
+                        const pct = totalReq > 0 ? ((ord.quantityOrdered / totalReq) * 100).toFixed(1) : '0';
+
+                        return (
+                          <tr key={`${ord.orderId}-${idx}`} className="hover:bg-amber-50/20 transition-colors">
+                            <td className="px-3.5 py-3 text-center text-slate-400 font-mono text-[11px]">
+                              {idx + 1}
+                            </td>
+
+                            {/* Nº Pedido */}
+                            <td className="px-4 py-3 font-mono font-bold text-indigo-700">
+                              <span className="inline-flex items-center gap-1.5">
+                                <FileText className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                                <span>{ord.orderNumber}</span>
+                              </span>
+                            </td>
+
+                            {/* Cliente */}
+                            <td className="px-4 py-3 font-medium text-slate-800">
+                              <div className="flex items-center gap-1.5">
+                                <User className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                                <span className="truncate max-w-[240px]" title={ord.clientName}>{ord.clientName}</span>
+                              </div>
+                            </td>
+
+                            {/* Data */}
+                            <td className="px-4 py-3 text-slate-600 font-mono text-[11px]">
+                              <div className="flex items-center gap-1.5">
+                                <Calendar className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                                <span>{ord.date || '-'}</span>
+                              </div>
+                            </td>
+
+                            {/* Prioridade */}
+                            <td className="px-4 py-3 text-center">
+                              {ord.priority === 'Alta' ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                  Alta
+                                </span>
+                              ) : ord.priority === 'Baixa' ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                  Baixa
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                                  Média
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Qtd Solicitada */}
+                            <td className="px-4 py-3 text-right bg-amber-50/30">
+                              <div className="flex flex-col items-end">
+                                <span className="font-mono text-sm font-black text-amber-950">
+                                  {ord.quantityOrdered.toLocaleString('pt-BR')} <span className="text-xs font-normal text-amber-800">un</span>
+                                </span>
+                                <div className="w-20 bg-amber-100 rounded-full h-1.5 mt-1 overflow-hidden">
+                                  <div 
+                                    className="bg-amber-600 h-1.5 rounded-full" 
+                                    style={{ width: `${Math.min(100, Math.max(5, Number(pct)))}%` }}
+                                  />
+                                </div>
+                                <span className="text-[10px] text-amber-700 font-mono mt-0.5">{pct}% do total a sair</span>
+                              </div>
+                            </td>
+
+                            {/* Preço Unit */}
+                            <td className="px-4 py-3 text-right font-mono text-emerald-700 font-semibold">
+                              $ {ord.unitPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                            </td>
+
+                            {/* Valor Total */}
+                            <td className="px-4 py-3 text-right font-mono text-blue-700 font-bold">
+                              $ {ord.totalPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+
+                  {/* Summary Footer of the table */}
+                  {filteredModalOrders.length > 0 && (
+                    <tfoot className="bg-slate-50 border-t-2 border-slate-300 font-semibold text-slate-800 text-xs">
+                      <tr>
+                        <td colSpan={5} className="px-4 py-3 text-right uppercase tracking-wider text-[11px] text-slate-600 font-bold">
+                          Subtotal dos Pedidos Listados ({filteredModalOrders.length} registros):
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-black text-amber-950 text-sm bg-amber-100/50">
+                          {filteredModalOrders.reduce((acc, curr) => acc + curr.quantityOrdered, 0).toLocaleString('pt-BR')} un
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono text-emerald-800 text-xs">
+                          {(() => {
+                            const subQty = filteredModalOrders.reduce((acc, curr) => acc + curr.quantityOrdered, 0);
+                            const subVal = filteredModalOrders.reduce((acc, curr) => acc + curr.totalPrice, 0);
+                            const subAvg = subQty > 0 ? (subVal / subQty) : 0;
+                            return `$ ${subAvg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+                          })()}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-bold text-blue-800 text-sm">
+                          $ {filteredModalOrders.reduce((acc, curr) => acc + curr.totalPrice, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                <Info className="h-4 w-4 text-amber-600 shrink-0" />
+                <span>Estes pedidos representam saídas pendentes registradas no sistema para este produto.</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseOrdersModal}
+                className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer shadow-xs"
               >
                 Fechar
               </button>

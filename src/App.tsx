@@ -32,9 +32,11 @@ import {
   getStoredFieldMappings,
   setStoredFieldMappings,
   getStoredWarehouses,
-  setStoredWarehouses
+  setStoredWarehouses,
+  getStoredSales,
+  setStoredSales
 } from './data';
-import { StockBalance, OrderHeader, Product, UserAccount, WebhookConfig, FieldMapping, Warehouse } from './types';
+import { StockBalance, OrderHeader, Product, UserAccount, WebhookConfig, FieldMapping, Warehouse, SaleRecord } from './types';
 import { 
   SSO_CONFIG, 
   extractAndStoreTokenFromUrl, 
@@ -52,6 +54,7 @@ import StockTable from './components/StockTable';
 import OrdersTable from './components/OrdersTable';
 import WebhookTable from './components/WebhookTable';
 import ProductsTable from './components/ProductsTable';
+import { SalesTable } from './components/SalesTable';
 import Migration from './components/Migration';
 import SSOGuard from './components/SSOGuard';
 
@@ -76,9 +79,10 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
   const [webhooks, setWebhooks] = useState<WebhookConfig[]>(getStoredWebhooks);
   const [fieldMappings, setFieldMappings] = useState<FieldMapping[]>(getStoredFieldMappings);
   const [warehouses, setWarehouses] = useState<Warehouse[]>(getStoredWarehouses);
+  const [sales, setSales] = useState<SaleRecord[]>(getStoredSales);
 
   // Active navigation tab
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'stock' | 'products' | 'orders' | 'webhook' | 'migration'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'stock' | 'sales' | 'products' | 'orders' | 'webhook' | 'migration'>('dashboard');
 
   // Track if initial load from the backend has completed
   const [initialLoadDone, setInitialLoadDone] = useState(false);
@@ -119,6 +123,10 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
               setWarehouses(data.warehouses);
               setStoredWarehouses(data.warehouses);
             }
+            if (data.sales) {
+              setSales(data.sales);
+              setStoredSales(data.sales);
+            }
           }
         }
       } catch (err) {
@@ -148,7 +156,8 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
             users,
             webhooks,
             fieldMappings,
-            warehouses
+            warehouses,
+            sales
           })
         });
       } catch (err) {
@@ -159,7 +168,7 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
     // Debounce to prevent hammering the server during multi-edits or fast inputs
     const timeoutId = setTimeout(syncToBackend, 500);
     return () => clearTimeout(timeoutId);
-  }, [stock, orders, products, users, webhooks, fieldMappings, warehouses, initialLoadDone]);
+  }, [stock, orders, products, users, webhooks, fieldMappings, warehouses, sales, initialLoadDone]);
 
   const handleUpdateWarehouses = (updatedWarehouses: Warehouse[]) => {
     setWarehouses(updatedWarehouses);
@@ -246,6 +255,40 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
   const handleClearAllProducts = () => {
     setProducts([]);
     setStoredProducts([]);
+  };
+
+  // Sales Handlers
+  const handleAddSale = (newSale: Omit<SaleRecord, 'id'>) => {
+    const sale: SaleRecord = {
+      id: `sale-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      ...newSale
+    };
+    const updated = [...sales, sale];
+    setSales(updated);
+    setStoredSales(updated);
+  };
+
+  const handleEditSale = (editedSale: SaleRecord) => {
+    const updated = sales.map(s => s.id === editedSale.id ? editedSale : s);
+    setSales(updated);
+    setStoredSales(updated);
+  };
+
+  const handleDeleteSale = (id: string) => {
+    const updated = sales.filter(s => s.id !== id);
+    setSales(updated);
+    setStoredSales(updated);
+  };
+
+  const handleClearAllSales = () => {
+    setSales([]);
+    setStoredSales([]);
+  };
+
+  const handleImportSales = (imported: SaleRecord[], overwrite = false) => {
+    const updated = overwrite ? imported : [...sales, ...imported];
+    setSales(updated);
+    setStoredSales(updated);
   };
 
   // User Management Handlers
@@ -385,6 +428,7 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
     webhooks: WebhookConfig[];
     fieldMappings: FieldMapping[];
     warehouses: Warehouse[];
+    sales?: SaleRecord[];
   }) => {
     setStock(data.stock || []);
     setStoredStock(data.stock || []);
@@ -394,6 +438,11 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
     
     setProducts(data.products || []);
     setStoredProducts(data.products || []);
+
+    if (data.sales) {
+      setSales(data.sales);
+      setStoredSales(data.sales);
+    }
     
     setUsers(data.users || []);
     setStoredUsers(data.users || []);
@@ -433,6 +482,7 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
     webhooks: WebhookConfig[];
     fieldMappings: FieldMapping[];
     warehouses: Warehouse[];
+    sales?: SaleRecord[];
   }) => {
     // Stock merge
     const newStock = [...(data.stock || []), ...stock];
@@ -492,6 +542,13 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
     const newWarehouses = [...warehouses, ...uniqueWarehouses];
     setWarehouses(newWarehouses);
     setStoredWarehouses(newWarehouses);
+
+    // Sales merge
+    if (data.sales && data.sales.length > 0) {
+      const mergedSales = [...sales, ...data.sales];
+      setSales(mergedSales);
+      setStoredSales(mergedSales);
+    }
   };
 
   // STATISTICS COMPUTATION for top metrics banner
@@ -507,38 +564,19 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col antialiased">
       
-      {/* Premium Header Bar */}
-      <header className="bg-indigo-950 text-white shrink-0 shadow-md">
+      {/* Premium Header Bar in #0c396b Deep Navy Tone */}
+      <header className="bg-[#0c396b] text-white shrink-0 shadow-md border-b border-[#082b52]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             
-            {/* Logo and title */}
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-indigo-600 rounded-lg text-white shadow-xs">
-                <Truck className="h-6 w-6" />
-              </div>
-              <div>
-                <h1 className="text-lg font-bold tracking-tight flex items-center gap-2">
-                  Gerenciador de Expedição
-                  <span className="hidden sm:inline-flex items-center gap-1 text-[9px] bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 font-semibold px-2 py-0.5 rounded-full">
-                    <ShieldCheck className="h-3 w-3 text-indigo-400" />
-                    SSO Ativo
-                  </span>
-                </h1>
-                <p className="text-[10px] text-indigo-200 uppercase font-bold tracking-widest -mt-0.5">
-                  Pedido x Saldo de Estoque
-                </p>
-              </div>
-            </div>
-
             {/* Main Tabs Navigation */}
             <nav className="flex space-x-1 items-center">
               <button
                 onClick={() => setActiveTab('dashboard')}
                 className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
                   activeTab === 'dashboard'
-                    ? 'bg-indigo-850 text-white shadow-xs'
-                    : 'text-indigo-200 hover:text-white hover:bg-indigo-900'
+                    ? 'bg-black/25 text-white shadow-xs border border-white/15'
+                    : 'text-blue-100 hover:text-white hover:bg-white/10'
                 }`}
               >
                 <Layers className="h-4 w-4" />
@@ -546,23 +584,37 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
               </button>
               
               <button
+                id="nav-tab-stock"
                 onClick={() => setActiveTab('stock')}
                 className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
                   activeTab === 'stock'
-                    ? 'bg-indigo-850 text-white shadow-xs'
-                    : 'text-indigo-200 hover:text-white hover:bg-indigo-900'
+                    ? 'bg-black/25 text-white shadow-xs border border-white/15'
+                    : 'text-blue-100 hover:text-white hover:bg-white/10'
                 }`}
               >
                 <Building className="h-4 w-4" />
-                <span>Saldo de Estoque</span>
+                <span>Analise Estoque</span>
+              </button>
+
+              <button
+                id="nav-tab-sales"
+                onClick={() => setActiveTab('sales')}
+                className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
+                  activeTab === 'sales'
+                    ? 'bg-black/25 text-white shadow-xs border border-white/15'
+                    : 'text-blue-100 hover:text-white hover:bg-white/10'
+                }`}
+              >
+                <TrendingUp className="h-4 w-4" />
+                <span>Analise Consumo</span>
               </button>
 
               <button
                 onClick={() => setActiveTab('products')}
                 className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
                   activeTab === 'products'
-                    ? 'bg-indigo-850 text-white shadow-xs'
-                    : 'text-indigo-200 hover:text-white hover:bg-indigo-900'
+                    ? 'bg-black/25 text-white shadow-xs border border-white/15'
+                    : 'text-blue-100 hover:text-white hover:bg-white/10'
                 }`}
               >
                 <Archive className="h-4 w-4" />
@@ -573,8 +625,8 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
                 onClick={() => setActiveTab('orders')}
                 className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
                   activeTab === 'orders'
-                    ? 'bg-indigo-850 text-white shadow-xs'
-                    : 'text-indigo-200 hover:text-white hover:bg-indigo-900'
+                    ? 'bg-black/25 text-white shadow-xs border border-white/15'
+                    : 'text-blue-100 hover:text-white hover:bg-white/10'
                 }`}
               >
                 <FileText className="h-4 w-4" />
@@ -585,8 +637,8 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
                 onClick={() => setActiveTab('webhook')}
                 className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
                   activeTab === 'webhook'
-                    ? 'bg-indigo-850 text-white shadow-xs'
-                    : 'text-indigo-200 hover:text-white hover:bg-indigo-900'
+                    ? 'bg-black/25 text-white shadow-xs border border-white/15'
+                    : 'text-blue-100 hover:text-white hover:bg-white/10'
                 }`}
               >
                 <Globe className="h-4 w-4" />
@@ -597,43 +649,43 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
                 onClick={() => setActiveTab('migration')}
                 className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
                   activeTab === 'migration'
-                    ? 'bg-indigo-850 text-white shadow-xs'
-                    : 'text-indigo-200 hover:text-white hover:bg-indigo-900'
+                    ? 'bg-black/25 text-white shadow-xs border border-white/15'
+                    : 'text-blue-100 hover:text-white hover:bg-white/10'
                 }`}
               >
-                <DownloadCloud className="h-4 w-4 text-indigo-400" />
+                <DownloadCloud className="h-4 w-4 text-blue-200" />
                 <span>Migrar / Backup</span>
               </button>
 
               {/* Separator */}
-              <span className="h-6 w-px bg-indigo-800 mx-2 block" />
+              <span className="h-6 w-px bg-white/20 mx-2 block" />
 
               {/* Back to Portal SSO Button */}
               <button
                 onClick={returnToPortalHub}
                 title="Voltar ao Painel do Portal SSO"
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-900/80 hover:bg-indigo-850 text-indigo-100 hover:text-white border border-indigo-700/60 text-xs font-semibold rounded-lg transition-all cursor-pointer shadow-xs"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-semibold rounded-lg transition-all cursor-pointer shadow-xs"
               >
-                <LayoutGrid className="h-3.5 w-3.5 text-indigo-300" />
+                <LayoutGrid className="h-3.5 w-3.5 text-blue-200" />
                 <span className="hidden md:inline">Portal SSO</span>
-                <ArrowUpRight className="h-3 w-3 text-indigo-400" />
+                <ArrowUpRight className="h-3 w-3 text-blue-200" />
               </button>
 
               {/* User badge and SSO Return */}
               <div className="flex items-center gap-2.5 pl-1">
                 <div className="hidden sm:flex flex-col items-end">
                   <span className="text-xs font-semibold text-white leading-none">{currentUser.fullName}</span>
-                  <span className="text-[9px] text-indigo-300 font-bold uppercase tracking-wider mt-0.5">
+                  <span className="text-[9px] text-blue-200 font-bold uppercase tracking-wider mt-0.5">
                     @{currentUser.username} • {currentUser.role}
                   </span>
                 </div>
-                <div className="h-8 w-8 bg-indigo-800 border border-indigo-700/80 rounded-full flex items-center justify-center text-indigo-100 font-bold text-xs select-none shadow-xs">
+                <div className="h-8 w-8 bg-white/15 border border-white/25 rounded-full flex items-center justify-center text-white font-bold text-xs select-none shadow-xs">
                   {currentUser.fullName ? currentUser.fullName.charAt(0).toUpperCase() : 'U'}
                 </div>
                 <button
                   onClick={logoutSSO}
                   title="Voltar ao Painel do Portal SSO"
-                  className="flex items-center gap-1 p-1.5 text-indigo-300 hover:text-red-300 hover:bg-red-500/20 rounded-lg transition-all cursor-pointer"
+                  className="flex items-center gap-1 p-1.5 text-blue-200 hover:text-red-300 hover:bg-red-500/20 rounded-lg transition-all cursor-pointer"
                 >
                   <LogOut className="h-4 w-4" />
                 </button>
@@ -644,60 +696,62 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
         </div>
       </header>
 
-      {/* Dynamic Summary Banner */}
-      <section className="bg-white border-b border-slate-200 py-4 shadow-2xs shrink-0">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:divide-x md:divide-slate-100">
-            
-            {/* Stat 1: Total Stock Units */}
-            <div className="flex items-center gap-3 px-2">
-              <span className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl">
-                <Package className="h-5 w-5" />
-              </span>
-              <div>
-                <span className="text-[10px] font-bold text-slate-400 uppercase block tracking-wider">Unidades em Estoque</span>
-                <span className="font-mono text-lg font-extrabold text-slate-800">{stats.totalStockUnits} un</span>
-              </div>
-            </div>
-
-            {/* Stat 2: Active Warehouses */}
-            <div className="flex items-center gap-3 px-2 md:pl-6">
-              <span className="p-2.5 bg-slate-50 text-slate-600 rounded-xl">
-                <Building className="h-5 w-5" />
-              </span>
-              <div>
-                <span className="text-[10px] font-bold text-slate-400 uppercase block tracking-wider">Depósitos Ativos</span>
-                <span className="font-mono text-lg font-extrabold text-slate-800">{stats.activeWarehouses} depósitos</span>
-              </div>
-            </div>
-
-            {/* Stat 3: Unique Products */}
-            <div className="flex items-center gap-3 px-2 md:pl-6">
-              <span className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
-                <Database className="h-5 w-5" />
-              </span>
-              <div>
-                <span className="text-[10px] font-bold text-slate-400 uppercase block tracking-wider">Catálogo Ativo</span>
-                <span className="font-mono text-lg font-extrabold text-slate-800">{stats.uniqueProductsInStock} produtos</span>
-              </div>
-            </div>
-
-            {/* Stat 4: Total Orders Value */}
-            <div className="flex items-center gap-3 px-2 md:pl-6">
-              <span className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl">
-                <TrendingUp className="h-5 w-5" />
-              </span>
-              <div>
-                <span className="text-[10px] font-bold text-slate-400 uppercase block tracking-wider font-sans">Carteira Total</span>
-                <span className="font-mono text-lg font-extrabold text-slate-800">
-                  $ {stats.totalOrdersValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+      {/* Dynamic Summary Banner - Visible only on Dashboard */}
+      {activeTab === 'dashboard' && (
+        <section className="bg-white border-b border-slate-200 py-4 shadow-2xs shrink-0">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:divide-x md:divide-slate-100">
+              
+              {/* Stat 1: Total Stock Units */}
+              <div className="flex items-center gap-3 px-2">
+                <span className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl">
+                  <Package className="h-5 w-5" />
                 </span>
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase block tracking-wider">Unidades em Estoque</span>
+                  <span className="font-mono text-lg font-extrabold text-slate-800">{stats.totalStockUnits} un</span>
+                </div>
               </div>
-            </div>
 
+              {/* Stat 2: Active Warehouses */}
+              <div className="flex items-center gap-3 px-2 md:pl-6">
+                <span className="p-2.5 bg-slate-50 text-slate-600 rounded-xl">
+                  <Building className="h-5 w-5" />
+                </span>
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase block tracking-wider">Depósitos Ativos</span>
+                  <span className="font-mono text-lg font-extrabold text-slate-800">{stats.activeWarehouses} depósitos</span>
+                </div>
+              </div>
+
+              {/* Stat 3: Unique Products */}
+              <div className="flex items-center gap-3 px-2 md:pl-6">
+                <span className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
+                  <Database className="h-5 w-5" />
+                </span>
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase block tracking-wider">Catálogo Ativo</span>
+                  <span className="font-mono text-lg font-extrabold text-slate-800">{stats.uniqueProductsInStock} produtos</span>
+                </div>
+              </div>
+
+              {/* Stat 4: Total Orders Value */}
+              <div className="flex items-center gap-3 px-2 md:pl-6">
+                <span className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl">
+                  <TrendingUp className="h-5 w-5" />
+                </span>
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase block tracking-wider font-sans">Carteira Total</span>
+                  <span className="font-mono text-lg font-extrabold text-slate-800">
+                    $ {stats.totalOrdersValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -716,6 +770,7 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
           <StockTable 
             stock={stock} 
             products={products}
+            orders={orders}
             onAddStock={handleAddStock}
             onEditStock={handleEditStock}
             onDeleteStock={handleDeleteStock}
@@ -727,6 +782,24 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
             webhooks={webhooks}
             fieldMappings={fieldMappings}
             onImportStock={handleImportStock}
+            onNavigateToOrders={() => setActiveTab('orders')}
+          />
+        )}
+
+        {activeTab === 'sales' && (
+          <SalesTable
+            sales={sales}
+            products={products}
+            stock={stock}
+            warehouses={warehouses}
+            onAddSale={handleAddSale}
+            onEditSale={handleEditSale}
+            onDeleteSale={handleDeleteSale}
+            onClearAllSales={handleClearAllSales}
+            onImportSales={handleImportSales}
+            webhooks={webhooks}
+            fieldMappings={fieldMappings}
+            currentUserRole={currentUser.role}
           />
         )}
 
@@ -791,6 +864,7 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
             webhooks={webhooks}
             fieldMappings={fieldMappings}
             warehouses={warehouses}
+            sales={sales}
             onOverwriteAll={handleOverwriteAllData}
             onMergeAll={handleMergeAllData}
           />

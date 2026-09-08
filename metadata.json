@@ -1,6 +1,6 @@
 {
-  "name": "Gerenciador de Expedição",
-  "description": "Dashboard e controle de saldo de estoque por depósito e pedidos em aberto para liberação de expedição.",
+  "name": "Analise Notifier",
+  "description": "Dashboard e controle de saldo de estoque por depósito, vendas mensais por SKU e pedidos em aberto para liberação de expedição.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

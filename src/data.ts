@@ -1,4 +1,4 @@
-import { StockBalance, OrderHeader, Product, UserAccount, WebhookConfig, FieldMapping, Warehouse } from './types';
+import { StockBalance, OrderHeader, Product, UserAccount, WebhookConfig, FieldMapping, Warehouse, SaleRecord } from './types';
 
 export const INITIAL_PRODUCTS: Product[] = [
   { code: 'PROD001', name: 'Notebook Dell Inspiron 15', category: 'Informática', pr_cod: 10001, codigo: 'PROD000001', lote: 'LOTE000001', avgQty1x: 12, avgQty3x: 36 },
@@ -10,14 +10,14 @@ export const INITIAL_PRODUCTS: Product[] = [
 ];
 
 export const INITIAL_WAREHOUSES: Warehouse[] = [
-  { id: 'wh-1', name: '0002.001', isActive: true, groupName: 'Deposito Central' },
-  { id: 'wh-2', name: '0002.004', isActive: true, groupName: 'Deposito Central' },
-  { id: 'wh-3', name: '0004.001', isActive: true, groupName: 'Deposito Sul' },
-  { id: 'wh-4', name: '0004.003', isActive: true, groupName: 'Deposito Sul' },
-  { id: 'wh-5', name: '0004.0004', isActive: true, groupName: 'Deposito Sul' },
-  { id: 'wh-6', name: 'DEP01 - Depósito Central', isActive: true, groupName: 'Deposito Central' },
-  { id: 'wh-7', name: 'DEP02 - Depósito Auxiliar', isActive: true, groupName: '' },
-  { id: 'wh-8', name: 'DEP03 - Logística Reversa/Rápida', isActive: true, groupName: '' },
+  { id: 'wh-1', name: '0002.001', isActive: true, groupName: 'São Paulo' },
+  { id: 'wh-2', name: '0002.004', isActive: true, groupName: 'São Paulo' },
+  { id: 'wh-3', name: '0004.001', isActive: true, groupName: 'Miami' },
+  { id: 'wh-4', name: '0004.003', isActive: true, groupName: 'Miami' },
+  { id: 'wh-5', name: '0004.002', isActive: true, groupName: 'Miami' },
+  { id: 'wh-6', name: 'DEP01 - Depósito Central', isActive: true, groupName: 'São Paulo' },
+  { id: 'wh-7', name: 'DEP02 - Depósito Auxiliar', isActive: true, groupName: 'São Paulo' },
+  { id: 'wh-8', name: 'DEP03 - Logística Reversa/Rápida', isActive: true, groupName: 'São Paulo' },
 ];
 
 export const INITIAL_STOCK: StockBalance[] = [
@@ -81,6 +81,33 @@ export const INITIAL_ORDERS: OrderHeader[] = [
       { id: 'itm-4-2', productCode: 'PROD004', productName: 'Mouse Sem Fio Logitech MX Master 3', quantityOrdered: 5, unitPrice: 499.00 },
     ],
     notes: 'Retirada agendada pelo cliente.',
+  },
+  {
+    id: 'ord-011351',
+    orderNumber: '011351',
+    clientName: 'CUMMINS BRASIL LTDA',
+    date: '2026-08-21',
+    priority: 'Média',
+    items: [
+      { id: 'itm-011351-1', productCode: 'FST-951R', productName: 'DETECTOR FST-951R', quantityOrdered: 15, unitPrice: 372.1847 },
+      { id: 'itm-011351-2', productCode: 'FSP-951', productName: 'DETEC FUM FOTOEL FSP-951', quantityOrdered: 85, unitPrice: 445.9151 },
+      { id: 'itm-011351-3', productCode: 'B501-WHITE', productName: 'BASE DETECTOR B501-WHITE UNITARY', quantityOrdered: 100, unitPrice: 58.3695 },
+      { id: 'itm-011351-4', productCode: 'ISO-X', productName: 'MODULO ISOLADOR DE FALHA ISO-X', quantityOrdered: 6, unitPrice: 387.6974 },
+    ],
+    notes: 'Pedido importado via integração.',
+  },
+  {
+    id: 'ord-011409',
+    orderNumber: '011409',
+    clientName: 'FIRE LOOK SISTEMAS DE INCENDIO LTDA',
+    date: '2026-08-31',
+    priority: 'Média',
+    items: [
+      { id: 'itm-011409-1', productCode: 'HPF-PS10E', productName: 'F ALIMEN REMOT -HPF-PS10E-RED', quantityOrdered: 1, unitPrice: 3582.46 },
+      { id: 'itm-011409-2', productCode: 'FSP-951', productName: 'DETEC FUM FOTOEL FSP-951', quantityOrdered: 4, unitPrice: 279.0625 },
+      { id: 'itm-011409-3', productCode: 'B501-WHITE', productName: 'BASE DETECTOR B501-WHITE UNITARY', quantityOrdered: 4, unitPrice: 36.95 },
+    ],
+    notes: 'Pedido importado via integração.',
   }
 ];
 
@@ -238,6 +265,23 @@ export function setStoredWebhooks(webhooks: WebhookConfig[]): void {
 
 export const INITIAL_MAPPINGS: FieldMapping[] = [
   {
+    id: 'map-stock-wh3',
+    webhookId: 'wh-3',
+    systemTable: 'StockBalance',
+    mappings: {
+      productCode: 'modelo',
+      productName: 'descricao',
+      warehouse: 'cdgrupo',
+      quantity: 'qtdest',
+      pr_cod: 'pr_cod',
+      codigo: 'codigo',
+      lote: 'marca',
+      pr_preco: 'pr_preco',
+      vlrest: 'vlrest'
+    },
+    updatedAt: '2026-09-02T18:51:11.437Z'
+  },
+  {
     id: 'map-1',
     webhookId: 'wh-1',
     systemTable: 'StockBalance',
@@ -339,6 +383,99 @@ export function getStoredWarehouses(): Warehouse[] {
 
 export function setStoredWarehouses(warehouses: Warehouse[]): void {
   localStorage.setItem('expedicao_warehouses', JSON.stringify(warehouses));
+}
+
+export const INITIAL_SALES: SaleRecord[] = [
+  // 2W-B (Total: 154)
+  { id: 'sale-1', sku: '2W-B', month: 8, year: 2025, quantity: 12 },
+  { id: 'sale-2', sku: '2W-B', month: 9, year: 2025, quantity: 5 },
+  { id: 'sale-3', sku: '2W-B', month: 10, year: 2025, quantity: 15 },
+  { id: 'sale-4', sku: '2W-B', month: 12, year: 2025, quantity: 24 },
+  { id: 'sale-5', sku: '2W-B', month: 1, year: 2026, quantity: 15 },
+  { id: 'sale-6', sku: '2W-B', month: 2, year: 2026, quantity: 17 },
+  { id: 'sale-7', sku: '2W-B', month: 3, year: 2026, quantity: 21 },
+  { id: 'sale-8', sku: '2W-B', month: 5, year: 2026, quantity: 8 },
+  { id: 'sale-9', sku: '2W-B', month: 6, year: 2026, quantity: 14 },
+  { id: 'sale-10', sku: '2W-B', month: 7, year: 2026, quantity: 11 },
+  { id: 'sale-11', sku: '2W-B', month: 8, year: 2026, quantity: 12 },
+
+  // 2WT-B (Total: 10)
+  { id: 'sale-12', sku: '2WT-B', month: 10, year: 2025, quantity: 1 },
+  { id: 'sale-13', sku: '2WT-B', month: 3, year: 2026, quantity: 3 },
+  { id: 'sale-14', sku: '2WT-B', month: 5, year: 2026, quantity: 2 },
+  { id: 'sale-15', sku: '2WT-B', month: 7, year: 2026, quantity: 4 },
+
+  // 302-AW-135 (Total: 1)
+  { id: 'sale-16', sku: '302-AW-135', month: 11, year: 2025, quantity: 1 },
+
+  // 302-AW-194 (Total: 45)
+  { id: 'sale-17', sku: '302-AW-194', month: 9, year: 2025, quantity: 32 },
+  { id: 'sale-18', sku: '302-AW-194', month: 1, year: 2026, quantity: 1 },
+  { id: 'sale-19', sku: '302-AW-194', month: 5, year: 2026, quantity: 5 },
+  { id: 'sale-20', sku: '302-AW-194', month: 6, year: 2026, quantity: 6 },
+  { id: 'sale-21', sku: '302-AW-194', month: 7, year: 2026, quantity: 1 },
+
+  // 302-EPM-135 (Total: 13)
+  { id: 'sale-22', sku: '302-EPM-135', month: 8, year: 2026, quantity: 13 },
+
+  // 302-EPM-194 (Total: 91)
+  { id: 'sale-23', sku: '302-EPM-194', month: 8, year: 2025, quantity: 10 },
+  { id: 'sale-24', sku: '302-EPM-194', month: 9, year: 2025, quantity: 3 },
+  { id: 'sale-25', sku: '302-EPM-194', month: 10, year: 2025, quantity: 2 },
+  { id: 'sale-26', sku: '302-EPM-194', month: 2, year: 2026, quantity: 2 },
+  { id: 'sale-27', sku: '302-EPM-194', month: 3, year: 2026, quantity: 12 },
+  { id: 'sale-28', sku: '302-EPM-194', month: 8, year: 2026, quantity: 62 },
+
+  // 302-ET-135 (Total: 7)
+  { id: 'sale-29', sku: '302-ET-135', month: 9, year: 2025, quantity: 7 },
+
+  // 302-ET-194 (Total: 23)
+  { id: 'sale-30', sku: '302-ET-194', month: 8, year: 2025, quantity: 12 },
+  { id: 'sale-31', sku: '302-ET-194', month: 10, year: 2025, quantity: 4 },
+  { id: 'sale-32', sku: '302-ET-194', month: 12, year: 2025, quantity: 7 },
+
+  // 50160636-001 (Total: 8)
+  { id: 'sale-33', sku: '50160636-001', month: 9, year: 2025, quantity: 1 },
+  { id: 'sale-34', sku: '50160636-001', month: 10, year: 2025, quantity: 3 },
+  { id: 'sale-35', sku: '50160636-001', month: 11, year: 2025, quantity: 2 },
+  { id: 'sale-36', sku: '50160636-001', month: 3, year: 2026, quantity: 1 },
+  { id: 'sale-37', sku: '50160636-001', month: 5, year: 2026, quantity: 1 },
+
+  // 5151 (Total: 4)
+  { id: 'sale-38', sku: '5151', month: 10, year: 2025, quantity: 1 },
+  { id: 'sale-39', sku: '5151', month: 7, year: 2026, quantity: 3 },
+
+  // 75554 (Total: 1)
+  { id: 'sale-40', sku: '75554', month: 1, year: 2026, quantity: 1 },
+
+  // ABF-1DB (Total: 9)
+  { id: 'sale-41', sku: 'ABF-1DB', month: 9, year: 2025, quantity: 2 },
+  { id: 'sale-42', sku: 'ABF-1DB', month: 10, year: 2025, quantity: 2 },
+  { id: 'sale-43', sku: 'ABF-1DB', month: 3, year: 2026, quantity: 4 },
+  { id: 'sale-44', sku: 'ABF-1DB', month: 5, year: 2026, quantity: 1 },
+
+  // ABS-2D (Total: 7)
+  { id: 'sale-45', sku: 'ABS-2D', month: 10, year: 2025, quantity: 2 },
+  { id: 'sale-46', sku: 'ABS-2D', month: 11, year: 2025, quantity: 2 },
+  { id: 'sale-47', sku: 'ABS-2D', month: 12, year: 2025, quantity: 2 },
+  { id: 'sale-48', sku: 'ABS-2D', month: 4, year: 2026, quantity: 1 },
+];
+
+export function getStoredSales(): SaleRecord[] {
+  const data = localStorage.getItem('expedicao_sales');
+  if (data) {
+    try {
+      return JSON.parse(data);
+    } catch {
+      return INITIAL_SALES;
+    }
+  }
+  localStorage.setItem('expedicao_sales', JSON.stringify(INITIAL_SALES));
+  return INITIAL_SALES;
+}
+
+export function setStoredSales(sales: SaleRecord[]): void {
+  localStorage.setItem('expedicao_sales', JSON.stringify(sales));
 }
 
 

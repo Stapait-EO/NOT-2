@@ -16,9 +16,10 @@ import {
   FileText,
   User as UserIcon,
   Globe,
-  Settings
+  Settings,
+  TrendingUp
 } from 'lucide-react';
-import { StockBalance, OrderHeader, Product, UserAccount, WebhookConfig, FieldMapping, Warehouse } from '../types';
+import { StockBalance, OrderHeader, Product, UserAccount, WebhookConfig, FieldMapping, Warehouse, SaleRecord } from '../types';
 
 interface MigrationProps {
   stock: StockBalance[];
@@ -28,6 +29,7 @@ interface MigrationProps {
   webhooks: WebhookConfig[];
   fieldMappings: FieldMapping[];
   warehouses: Warehouse[];
+  sales?: SaleRecord[];
   onOverwriteAll: (data: {
     stock: StockBalance[];
     orders: OrderHeader[];
@@ -36,6 +38,7 @@ interface MigrationProps {
     webhooks: WebhookConfig[];
     fieldMappings: FieldMapping[];
     warehouses: Warehouse[];
+    sales?: SaleRecord[];
   }) => void;
   onMergeAll: (data: {
     stock: StockBalance[];
@@ -45,6 +48,7 @@ interface MigrationProps {
     webhooks: WebhookConfig[];
     fieldMappings: FieldMapping[];
     warehouses: Warehouse[];
+    sales?: SaleRecord[];
   }) => void;
 }
 
@@ -58,6 +62,7 @@ interface BackupPayload {
   webhooks: WebhookConfig[];
   fieldMappings: FieldMapping[];
   warehouses: Warehouse[];
+  sales?: SaleRecord[];
 }
 
 export default function Migration({
@@ -68,6 +73,7 @@ export default function Migration({
   webhooks,
   fieldMappings,
   warehouses,
+  sales = [],
   onOverwriteAll,
   onMergeAll
 }: MigrationProps) {
@@ -96,7 +102,8 @@ export default function Migration({
         users,
         webhooks,
         fieldMappings,
-        warehouses
+        warehouses,
+        sales
       };
 
       const zip = new JSZip();
@@ -284,6 +291,14 @@ export default function Migration({
                 </div>
 
                 <div className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-100">
+                  <TrendingUp className="h-4.5 w-4.5 text-emerald-600" />
+                  <div className="text-xs">
+                    <span className="font-bold text-slate-800 font-mono block">{sales.length}</span>
+                    <span className="text-slate-400">Vendas</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-100">
                   <UserIcon className="h-4.5 w-4.5 text-amber-500" />
                   <div className="text-xs">
                     <span className="font-bold text-slate-800 font-mono block">{users.length}</span>
@@ -419,11 +434,11 @@ export default function Migration({
                   {/* Summary of items in backup */}
                   <div className="bg-white p-2.5 rounded-lg border border-indigo-100 grid grid-cols-3 gap-2 text-[10px] font-mono text-slate-600">
                     <div>📦 Estoque: <strong className="text-slate-800">{parsedData.stock?.length || 0}</strong></div>
+                    <div>📈 Vendas: <strong className="text-slate-800">{parsedData.sales?.length || 0}</strong></div>
                     <div>🏷️ Produtos: <strong className="text-slate-800">{parsedData.products?.length || 0}</strong></div>
                     <div>📄 Pedidos: <strong className="text-slate-800">{parsedData.orders?.length || 0}</strong></div>
                     <div>👥 Usuários: <strong className="text-slate-800">{parsedData.users?.length || 0}</strong></div>
                     <div>🌐 Webhooks: <strong className="text-slate-800">{parsedData.webhooks?.length || 0}</strong></div>
-                    <div>⚙️ De/Para: <strong className="text-slate-800">{parsedData.fieldMappings?.length || 0}</strong></div>
                   </div>
                 </div>
 

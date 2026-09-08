@@ -237,7 +237,8 @@ const INITIAL_DB = {
       },
       updatedAt: '2026-07-14T09:20:00.000Z'
     }
-  ]
+  ],
+  sales: []
 };
 
 // Helper to read DB safely with file existence validation

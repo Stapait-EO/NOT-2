@@ -125,6 +125,7 @@ export default function WebhookTable({
   // Available system tables and their fields for DE/PARA mapping
   const SYSTEM_TABLES_FIELDS: { [table: string]: string[] } = useMemo(() => ({
     StockBalance: ['id', 'productCode', 'productName', 'warehouse', 'quantity', 'pr_cod', 'codigo', 'lote', 'pr_preco', 'vlrest'],
+    SaleRecord: ['sku', 'month', 'year', 'quantity', 'date', 'notes'],
     OrderHeader: ['id', 'orderNumber', 'clientName', 'date', 'priority', 'notes', 'items', 'itemProductCode', 'itemQuantity', 'itemUnitPrice'],
     Product: ['code', 'name', 'category', 'pr_cod', 'codigo', 'lote', 'avgQty1x', 'avgQty3x'],
     UserAccount: ['id', 'username', 'fullName', 'createdAt', 'role']
@@ -132,6 +133,7 @@ export default function WebhookTable({
 
   const TABLE_LABELS: { [table: string]: string } = {
     StockBalance: 'StockBalance (Estoque)',
+    SaleRecord: 'SaleRecord (Vendas)',
     OrderHeader: 'OrderHeader (Pedidos)',
     Product: 'Product (Produtos)',
     UserAccount: 'UserAccount (Usuários)'
@@ -141,6 +143,9 @@ export default function WebhookTable({
     id: 'ID do Registro',
     productCode: 'Código do Produto',
     productName: 'Nome do Produto',
+    sku: 'Código do Produto (SKU)',
+    month: 'Mês da Venda (1-12)',
+    year: 'Ano da Venda (ex: 2025)',
     warehouse: 'Depósito / Almoxarifado',
     quantity: 'Quantidade',
     orderNumber: 'Número do Pedido',
@@ -1110,7 +1115,8 @@ export default function WebhookTable({
                         <td className="py-4 px-6">
                           {wh.targetScreen ? (
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-indigo-700 bg-indigo-50 border border-indigo-200/60 font-semibold text-xs">
-                              {wh.targetScreen === 'stock' ? 'Saldo de Estoque' :
+                              {wh.targetScreen === 'stock' ? 'Analise Estoque' :
+                               wh.targetScreen === 'sales' ? 'Analise Consumo' :
                                wh.targetScreen === 'products' ? 'Produtos' :
                                wh.targetScreen === 'orders' ? 'Pedidos em Aberto' :
                                wh.targetScreen === 'users' ? 'Usuários' : wh.targetScreen}
@@ -1789,7 +1795,8 @@ export default function WebhookTable({
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-slate-800 bg-white focus:outline-none focus:border-indigo-500 transition-all cursor-pointer"
                 >
                   <option value="">Não Executar em Tela (Somente via gatilhos/manual)</option>
-                  <option value="stock">Saldo de Estoque</option>
+                  <option value="stock">Analise Estoque</option>
+                  <option value="sales">Analise Consumo</option>
                   <option value="products">Produtos</option>
                   <option value="orders">Pedidos em Aberto</option>
                   <option value="users">Usuários</option>
