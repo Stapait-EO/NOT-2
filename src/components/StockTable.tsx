@@ -66,7 +66,9 @@ export default function StockTable({
   onImportStock,
   onNavigateToOrders
 }: StockTableProps) {
-  const canManageStock = currentUserRole === 'admin' || currentUserRole === 'almoxarife';
+  const roleLower = (currentUserRole || '').toLowerCase();
+  const isMasterOrAdmin = roleLower === 'master' || roleLower === 'admin';
+  const canManageStock = isMasterOrAdmin || roleLower === 'almoxarife';
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedWarehouseFilter, setSelectedWarehouseFilter] = useState('Todos');
@@ -1436,15 +1438,17 @@ export default function StockTable({
 
           {/* Add/Manage Buttons */}
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              id="btn-warehouse-management"
-              onClick={() => setIsWhManagementOpen(true)}
-              className="flex items-center justify-center gap-2 border border-slate-300 hover:bg-slate-50 text-slate-700 px-3.5 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer"
-              title="Visualizar ou pré-cadastrar depósitos do sistema"
-            >
-              <Building className="h-4 w-4 text-slate-500" />
-              <span>Cadastro</span>
-            </button>
+            {isMasterOrAdmin && (
+              <button
+                id="btn-warehouse-management"
+                onClick={() => setIsWhManagementOpen(true)}
+                className="flex items-center justify-center gap-2 border border-slate-300 hover:bg-slate-50 text-slate-700 px-3.5 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer"
+                title="Visualizar ou pré-cadastrar depósitos do sistema"
+              >
+                <Building className="h-4 w-4 text-slate-500" />
+                <span>Cadastro</span>
+              </button>
+            )}
             
             {canManageStock ? (
               <>
@@ -1475,7 +1479,7 @@ export default function StockTable({
                   )}
                 </button>
 
-                {stock.length > 0 && (
+                {isMasterOrAdmin && stock.length > 0 && (
                   <button
                     id="btn-clear-all-stock"
                     onClick={() => setIsClearAllConfirmOpen(true)}
@@ -1486,14 +1490,16 @@ export default function StockTable({
                     <span>Excluir</span>
                   </button>
                 )}
-                <button
-                  id="btn-add-stock-balance"
-                  onClick={handleOpenAddModal}
-                  className="flex items-center justify-center gap-2 bg-indigo-600 text-white hover:bg-indigo-700 px-3.5 py-2 text-sm font-semibold rounded-lg shadow-sm transition-colors cursor-pointer"
-                >
-                  <Plus className="h-4 w-4" />
-                  Lançar
-                </button>
+                {isMasterOrAdmin && (
+                  <button
+                    id="btn-add-stock-balance"
+                    onClick={handleOpenAddModal}
+                    className="flex items-center justify-center gap-2 bg-indigo-600 text-white hover:bg-indigo-700 px-3.5 py-2 text-sm font-semibold rounded-lg shadow-sm transition-colors cursor-pointer"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Lançar
+                  </button>
+                )}
               </>
             ) : (
               <div className="flex items-center gap-1.5 px-3 py-2 bg-slate-50 border border-slate-200 text-slate-400 text-xs font-semibold rounded-lg select-none">
@@ -1669,7 +1675,7 @@ export default function StockTable({
                               {/* Preço Unit médio */}
                               <div className="font-mono text-xs font-semibold text-emerald-700">
                                 {data.quantity > 0 ? (
-                                  `$ ${avgPrice.toLocaleString('pt-BR', { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`
+                                  `$ ${avgPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                                 ) : (
                                   <span className="text-slate-300">-</span>
                                 )}
@@ -1703,8 +1709,8 @@ export default function StockTable({
                   <th className="px-6 py-3.5">Cód. Interno</th>
                   <th className="px-6 py-3.5">Cód. Estruturado</th>
                   <th className="px-6 py-3.5">Lote</th>
-                  <th className="px-6 py-3.5">Preço Unit (10/4)</th>
-                  <th className="px-6 py-3.5">Preço/Vl Rest (10/4)</th>
+                  <th className="px-6 py-3.5">Preço Unit</th>
+                  <th className="px-6 py-3.5">Preço/Vl Rest</th>
                   <th className="px-6 py-3.5 text-center">Quantidade Saldo</th>
                   {canManageStock && <th className="px-6 py-3.5 text-right">Ações</th>}
                 </tr>
@@ -1791,12 +1797,12 @@ export default function StockTable({
 
                       {/* displayPrPreco */}
                       <td className="px-6 py-4 font-mono text-xs font-semibold text-emerald-700">
-                        {displayPrPreco !== undefined ? `$ ${Number(displayPrPreco).toFixed(4).replace('.', ',')}` : <span className="text-slate-300">-</span>}
+                        {displayPrPreco !== undefined ? `$ ${Number(displayPrPreco).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : <span className="text-slate-300">-</span>}
                       </td>
 
                       {/* displayVlrest */}
                       <td className="px-6 py-4 font-mono text-xs font-semibold text-blue-700">
-                        {displayVlrest !== undefined ? `$ ${Number(displayVlrest).toFixed(4).replace('.', ',')}` : <span className="text-slate-300">-</span>}
+                        {displayVlrest !== undefined ? `$ ${Number(displayVlrest).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : <span className="text-slate-300">-</span>}
                       </td>
 
                       {/* Quantity */}
@@ -2645,7 +2651,7 @@ export default function StockTable({
                   <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Preço Médio Ponderado</span>
                   <div className="mt-1">
                     <span className="text-xl font-bold font-mono text-slate-800">
-                      $ {batchMetrics.avgPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                      $ {batchMetrics.avgPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                 </div>
@@ -2847,7 +2853,7 @@ export default function StockTable({
 
                             {/* Preço Unit */}
                             <td className="px-4 py-3 text-right font-mono text-emerald-700 font-semibold">
-                              $ {pr.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                              $ {pr.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </td>
 
                             {/* Valor Total */}
@@ -2875,7 +2881,7 @@ export default function StockTable({
                             const subQty = filteredBatchItems.reduce((acc, curr) => acc + curr.quantity, 0);
                             const subVal = filteredBatchItems.reduce((acc, curr) => acc + (curr.vlrest !== undefined ? curr.vlrest : (curr.quantity * (curr.pr_preco || 0))), 0);
                             const subAvg = subQty > 0 ? (subVal / subQty) : 0;
-                            return `$ ${subAvg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+                            return `$ ${subAvg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                           })()}
                         </td>
                         <td className="px-4 py-3 text-right font-mono font-bold text-blue-800 text-sm">
@@ -3273,7 +3279,7 @@ export default function StockTable({
 
                             {/* Preço Unit */}
                             <td className="px-4 py-3 text-right font-mono text-emerald-700 font-semibold">
-                              $ {ord.unitPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                              $ {ord.unitPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </td>
 
                             {/* Valor Total */}
@@ -3301,7 +3307,7 @@ export default function StockTable({
                             const subQty = filteredModalOrders.reduce((acc, curr) => acc + curr.quantityOrdered, 0);
                             const subVal = filteredModalOrders.reduce((acc, curr) => acc + curr.totalPrice, 0);
                             const subAvg = subQty > 0 ? (subVal / subQty) : 0;
-                            return `$ ${subAvg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+                            return `$ ${subAvg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                           })()}
                         </td>
                         <td className="px-4 py-3 text-right font-mono font-bold text-blue-800 text-sm">

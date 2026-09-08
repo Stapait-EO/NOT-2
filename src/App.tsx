@@ -14,8 +14,6 @@ import {
   Globe,
   Archive,
   DownloadCloud,
-  LayoutGrid,
-  ArrowUpRight,
   ShieldCheck
 } from 'lucide-react';
 import { 
@@ -46,8 +44,7 @@ import {
   clearSSOSession, 
   validateSSOToken, 
   redirectToSSOLogin, 
-  logoutSSO, 
-  returnToPortalHub 
+  logoutSSO 
 } from './sso';
 import Dashboard from './components/Dashboard';
 import StockTable from './components/StockTable';
@@ -81,8 +78,18 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
   const [warehouses, setWarehouses] = useState<Warehouse[]>(getStoredWarehouses);
   const [sales, setSales] = useState<SaleRecord[]>(getStoredSales);
 
-  // Active navigation tab
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'stock' | 'sales' | 'products' | 'orders' | 'webhook' | 'migration'>('dashboard');
+  // Active navigation tab (Analise Estoque as initial screen)
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'stock' | 'sales' | 'products' | 'orders' | 'webhook' | 'migration'>('stock');
+
+  // Role permissions check (Master and Admin only for system/settings tools)
+  const userRoleLower = (currentUser?.role || '').toLowerCase();
+  const isMasterOrAdmin = userRoleLower === 'master' || userRoleLower === 'admin';
+
+  useEffect(() => {
+    if (!isMasterOrAdmin && (activeTab === 'webhook' || activeTab === 'migration')) {
+      setActiveTab('stock');
+    }
+  }, [isMasterOrAdmin, activeTab]);
 
   // Track if initial load from the backend has completed
   const [initialLoadDone, setInitialLoadDone] = useState(false);
@@ -572,18 +579,6 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
             {/* Main Tabs Navigation */}
             <nav className="flex space-x-1 items-center">
               <button
-                onClick={() => setActiveTab('dashboard')}
-                className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
-                  activeTab === 'dashboard'
-                    ? 'bg-black/25 text-white shadow-xs border border-white/15'
-                    : 'text-blue-100 hover:text-white hover:bg-white/10'
-                }`}
-              >
-                <Layers className="h-4 w-4" />
-                <span>Painel Analítico</span>
-              </button>
-              
-              <button
                 id="nav-tab-stock"
                 onClick={() => setActiveTab('stock')}
                 className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
@@ -610,6 +605,19 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
               </button>
 
               <button
+                id="nav-tab-dashboard"
+                onClick={() => setActiveTab('dashboard')}
+                className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
+                  activeTab === 'dashboard'
+                    ? 'bg-black/25 text-white shadow-xs border border-white/15'
+                    : 'text-blue-100 hover:text-white hover:bg-white/10'
+                }`}
+              >
+                <Layers className="h-4 w-4" />
+                <span>Painel Analítico</span>
+              </button>
+
+              <button
                 onClick={() => setActiveTab('products')}
                 className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
                   activeTab === 'products'
@@ -633,54 +641,43 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
                 <span>Pedidos em Aberto</span>
               </button>
 
-              <button
-                onClick={() => setActiveTab('webhook')}
-                className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
-                  activeTab === 'webhook'
-                    ? 'bg-black/25 text-white shadow-xs border border-white/15'
-                    : 'text-blue-100 hover:text-white hover:bg-white/10'
-                }`}
-              >
-                <Globe className="h-4 w-4" />
-                <span>Webhook</span>
-              </button>
+              {isMasterOrAdmin && (
+                <>
+                  <button
+                    id="nav-tab-webhook"
+                    onClick={() => setActiveTab('webhook')}
+                    className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
+                      activeTab === 'webhook'
+                        ? 'bg-black/25 text-white shadow-xs border border-white/15'
+                        : 'text-blue-100 hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    <Globe className="h-4 w-4" />
+                    <span>Webhook</span>
+                  </button>
 
-              <button
-                onClick={() => setActiveTab('migration')}
-                className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
-                  activeTab === 'migration'
-                    ? 'bg-black/25 text-white shadow-xs border border-white/15'
-                    : 'text-blue-100 hover:text-white hover:bg-white/10'
-                }`}
-              >
-                <DownloadCloud className="h-4 w-4 text-blue-200" />
-                <span>Migrar / Backup</span>
-              </button>
+                  <button
+                    id="nav-tab-migration"
+                    onClick={() => setActiveTab('migration')}
+                    className={`flex items-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer ${
+                      activeTab === 'migration'
+                        ? 'bg-black/25 text-white shadow-xs border border-white/15'
+                        : 'text-blue-100 hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    <DownloadCloud className="h-4 w-4 text-blue-200" />
+                    <span>Migrar / Backup</span>
+                  </button>
+                </>
+              )}
 
               {/* Separator */}
               <span className="h-6 w-px bg-white/20 mx-2 block" />
-
-              {/* Back to Portal SSO Button */}
-              <button
-                onClick={returnToPortalHub}
-                title="Voltar ao Painel do Portal SSO"
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-semibold rounded-lg transition-all cursor-pointer shadow-xs"
-              >
-                <LayoutGrid className="h-3.5 w-3.5 text-blue-200" />
-                <span className="hidden md:inline">Portal SSO</span>
-                <ArrowUpRight className="h-3 w-3 text-blue-200" />
-              </button>
 
               {/* User badge and SSO Return */}
               <div className="flex items-center gap-2.5 pl-1">
                 <div className="hidden sm:flex flex-col items-end">
                   <span className="text-xs font-semibold text-white leading-none">{currentUser.fullName}</span>
-                  <span className="text-[9px] text-blue-200 font-bold uppercase tracking-wider mt-0.5">
-                    @{currentUser.username} • {currentUser.role}
-                  </span>
-                </div>
-                <div className="h-8 w-8 bg-white/15 border border-white/25 rounded-full flex items-center justify-center text-white font-bold text-xs select-none shadow-xs">
-                  {currentUser.fullName ? currentUser.fullName.charAt(0).toUpperCase() : 'U'}
                 </div>
                 <button
                   onClick={logoutSSO}
@@ -834,7 +831,7 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
           />
         )}
 
-        {activeTab === 'webhook' && (
+        {isMasterOrAdmin && activeTab === 'webhook' && (
           <WebhookTable 
             currentUser={currentUser}
             webhooks={webhooks}
@@ -855,7 +852,7 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
           />
         )}
 
-        {activeTab === 'migration' && (
+        {isMasterOrAdmin && activeTab === 'migration' && (
           <Migration 
             stock={stock}
             orders={orders}

@@ -12,18 +12,29 @@ body {
   color: #1e293b;
 }
 
-/* Custom scrollbar for beautiful tables */
+/* Custom scrollbar for easy grabbing and scrolling */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 12px;
+  height: 14px;
 }
 ::-webkit-scrollbar-track {
   background: #f1f5f9;
+  border-radius: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 3px;
+  background: #94a3b8;
+  border-radius: 8px;
+  border: 2px solid #f1f5f9;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: #64748b;
+}
+::-webkit-scrollbar-thumb:active {
+  background: #475569;
+}
+
+/* Firefox standard scrollbar support */
+* {
+  scrollbar-width: auto;
+  scrollbar-color: #94a3b8 #f1f5f9;
 }
