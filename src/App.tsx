@@ -94,47 +94,62 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
   // Track if initial load from the backend has completed
   const [initialLoadDone, setInitialLoadDone] = useState(false);
 
-  // 1. Initial Load from Backend Database File
+  // 1. Initial Load from Backend Database File (via secure /api/db endpoint)
   useEffect(() => {
     const loadData = async () => {
       try {
-        const response = await fetch('/api/db');
+        const token = getStoredSSOToken();
+        const headers: Record<string, string> = {
+          'Cache-Control': 'no-cache',
+          'X-Requested-With': 'XMLHttpRequest'
+        };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        const response = await fetch('/api/db', {
+          headers,
+          cache: 'no-cache'
+        });
+
         if (response.ok) {
           const data = await response.json();
           if (data) {
-            if (data.stock) {
+            if (Array.isArray(data.stock) && data.stock.length > 0) {
               setStock(data.stock);
               setStoredStock(data.stock);
             }
-            if (data.orders) {
+            if (Array.isArray(data.orders) && data.orders.length > 0) {
               setOrders(data.orders);
               setStoredOrders(data.orders);
             }
-            if (data.products) {
+            if (Array.isArray(data.products) && data.products.length > 0) {
               setProducts(data.products);
               setStoredProducts(data.products);
             }
-            if (data.users) {
+            if (Array.isArray(data.users) && data.users.length > 0) {
               setUsers(data.users);
               setStoredUsers(data.users);
             }
-            if (data.webhooks) {
+            if (Array.isArray(data.webhooks) && data.webhooks.length > 0) {
               setWebhooks(data.webhooks);
               setStoredWebhooks(data.webhooks);
             }
-            if (data.fieldMappings) {
+            if (Array.isArray(data.fieldMappings) && data.fieldMappings.length > 0) {
               setFieldMappings(data.fieldMappings);
               setStoredFieldMappings(data.fieldMappings);
             }
-            if (data.warehouses) {
+            if (Array.isArray(data.warehouses) && data.warehouses.length > 0) {
               setWarehouses(data.warehouses);
               setStoredWarehouses(data.warehouses);
             }
-            if (data.sales) {
+            if (Array.isArray(data.sales) && data.sales.length > 0) {
               setSales(data.sales);
               setStoredSales(data.sales);
             }
           }
+        } else {
+          console.warn("Servidor respondeu com status", response.status);
         }
       } catch (err) {
         console.error("Erro ao carregar dados do servidor:", err);
@@ -148,14 +163,23 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
   // 2. Synchronize to Backend Database File on Any State Changes
   useEffect(() => {
     if (!initialLoadDone) return;
+    // CRITICAL: Never overwrite server database with empty lists
+    if (stock.length === 0 && products.length === 0) return;
 
     const syncToBackend = async () => {
       try {
+        const token = getStoredSSOToken();
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+
         await fetch('/api/db', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
+          headers,
           body: JSON.stringify({
             stock,
             orders,
@@ -567,6 +591,18 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
     }, 0),
     activeWarehouses: new Set(stock.map(s => s.warehouse)).size,
   };
+
+  if (!initialLoadDone && stock.length === 0) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-12 h-12 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin mb-4" />
+        <h2 className="text-lg font-bold text-white mb-1">Carregando base de dados Notifier...</h2>
+        <p className="text-sm text-slate-400 max-w-sm">
+          Sincronizando produtos, saldos de estoque e pedidos com o servidor.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col antialiased">

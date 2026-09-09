@@ -1,13 +1,6 @@
 import { StockBalance, OrderHeader, Product, UserAccount, WebhookConfig, FieldMapping, Warehouse, SaleRecord } from './types';
 
-export const INITIAL_PRODUCTS: Product[] = [
-  { code: 'PROD001', name: 'Notebook Dell Inspiron 15', category: 'Informática', pr_cod: 10001, codigo: 'PROD000001', lote: 'LOTE000001', avgQty1x: 12, avgQty3x: 36 },
-  { code: 'PROD002', name: 'Monitor LG UltraWide 29"', category: 'Monitores', pr_cod: 10002, codigo: 'PROD000002', lote: 'LOTE000002', avgQty1x: 8, avgQty3x: 24 },
-  { code: 'PROD003', name: 'Teclado Mecânico Keychron K2', category: 'Acessórios', pr_cod: 10003, codigo: 'PROD000003', lote: 'LOTE000003', avgQty1x: 25, avgQty3x: 75 },
-  { code: 'PROD004', name: 'Mouse Sem Fio Logitech MX Master 3', category: 'Acessórios', pr_cod: 10004, codigo: 'PROD000004', lote: 'LOTE000004', avgQty1x: 40, avgQty3x: 120 },
-  { code: 'PROD005', name: 'Headset Gamer HyperX Cloud II', category: 'Áudio', pr_cod: 10005, codigo: 'PROD000005', lote: 'LOTE000005', avgQty1x: 15, avgQty3x: 45 },
-  { code: 'PROD006', name: 'Smartphone Samsung Galaxy S23', category: 'Celulares', pr_cod: 10006, codigo: 'PROD000006', lote: 'LOTE000006', avgQty1x: 10, avgQty3x: 30 },
-];
+export const INITIAL_PRODUCTS: Product[] = [];
 
 export const INITIAL_WAREHOUSES: Warehouse[] = [
   { id: 'wh-1', name: '0002.001', isActive: true, groupName: 'São Paulo' },
@@ -20,96 +13,9 @@ export const INITIAL_WAREHOUSES: Warehouse[] = [
   { id: 'wh-8', name: 'DEP03 - Logística Reversa/Rápida', isActive: true, groupName: 'São Paulo' },
 ];
 
-export const INITIAL_STOCK: StockBalance[] = [
-  { id: 'stk-1', productCode: 'PROD001', productName: 'Notebook Dell Inspiron 15', warehouse: 'DEP01 - Depósito Central', quantity: 12, pr_cod: 10001, codigo: 'PROD000001', lote: 'LOTE000001', pr_preco: 3899.9000, vlrest: 3899.9000 },
-  { id: 'stk-2', productCode: 'PROD001', productName: 'Notebook Dell Inspiron 15', warehouse: 'DEP02 - Depósito Auxiliar', quantity: 5, pr_cod: 10001, codigo: 'PROD000001', lote: 'LOTE000001', pr_preco: 3899.9000, vlrest: 3899.9000 },
-  { id: 'stk-3', productCode: 'PROD002', productName: 'Monitor LG UltraWide 29"', warehouse: 'DEP01 - Depósito Central', quantity: 4, pr_cod: 10002, codigo: 'PROD000002', lote: 'LOTE000002', pr_preco: 1299.0000, vlrest: 1299.0000 },
-  { id: 'stk-4', productCode: 'PROD002', productName: 'Monitor LG UltraWide 29"', warehouse: 'DEP03 - Logística Reversa/Rápida', quantity: 6, pr_cod: 10002, codigo: 'PROD000002', lote: 'LOTE000002', pr_preco: 1299.0000, vlrest: 1299.0000 },
-  { id: 'stk-5', productCode: 'PROD003', productName: 'Teclado Mecânico Keychron K2', warehouse: 'DEP02 - Depósito Auxiliar', quantity: 18, pr_cod: 10003, codigo: 'PROD000003', lote: 'LOTE000003', pr_preco: 650.0000, vlrest: 650.0000 },
-  { id: 'stk-6', productCode: 'PROD004', productName: 'Mouse Sem Fio Logitech MX Master 3', warehouse: 'DEP01 - Depósito Central', quantity: 45, pr_cod: 10004, codigo: 'PROD000004', lote: 'LOTE000004', pr_preco: 499.0000, vlrest: 499.0000 },
-  { id: 'stk-7', productCode: 'PROD004', productName: 'Mouse Sem Fio Logitech MX Master 3', warehouse: 'DEP02 - Depósito Auxiliar', quantity: 15, pr_cod: 10004, codigo: 'PROD000004', lote: 'LOTE000004', pr_preco: 499.0000, vlrest: 499.0000 },
-  { id: 'stk-8', productCode: 'PROD005', productName: 'Headset Gamer HyperX Cloud II', warehouse: 'DEP03 - Logística Reversa/Rápida', quantity: 2, pr_cod: 10005, codigo: 'PROD000005', lote: 'LOTE000005', pr_preco: 549.9000, vlrest: 549.9000 },
-  { id: 'stk-9', productCode: 'PROD006', productName: 'Smartphone Samsung Galaxy S23', warehouse: 'DEP01 - Depósito Central', quantity: 0, pr_cod: 10006, codigo: 'PROD000006', lote: 'LOTE000006', pr_preco: 4200.0000, vlrest: 4200.0000 },
-];
+export const INITIAL_STOCK: StockBalance[] = [];
 
-export const INITIAL_ORDERS: OrderHeader[] = [
-  {
-    id: 'ord-1001',
-    orderNumber: 'PED-1001',
-    clientName: 'Tech Solutions Paulista Ltda',
-    date: '2026-07-10',
-    priority: 'Alta',
-    items: [
-      { id: 'itm-1-1', productCode: 'PROD001', productName: 'Notebook Dell Inspiron 15', quantityOrdered: 8, unitPrice: 3899.90 },
-      { id: 'itm-1-2', productCode: 'PROD004', productName: 'Mouse Sem Fio Logitech MX Master 3', quantityOrdered: 10, unitPrice: 499.00 },
-    ],
-    notes: 'Cliente solicitou entrega prioritária no período da manhã.',
-  },
-  {
-    id: 'ord-1002',
-    orderNumber: 'PED-1002',
-    clientName: 'Distribuidora Global Varejo',
-    date: '2026-07-12',
-    priority: 'Média',
-    items: [
-      { id: 'itm-2-1', productCode: 'PROD001', productName: 'Notebook Dell Inspiron 15', quantityOrdered: 10, unitPrice: 3899.90 },
-      { id: 'itm-2-2', productCode: 'PROD005', productName: 'Headset Gamer HyperX Cloud II', quantityOrdered: 12, unitPrice: 549.90 },
-      { id: 'itm-2-3', productCode: 'PROD002', productName: 'Monitor LG UltraWide 29"', quantityOrdered: 5, unitPrice: 1299.00 },
-    ],
-    notes: 'Aguardando liberação de crédito para despacho completo.',
-  },
-  {
-    id: 'ord-1003',
-    orderNumber: 'PED-1003',
-    clientName: 'Mariana Silva de Souza',
-    date: '2026-07-13',
-    priority: 'Baixa',
-    items: [
-      { id: 'itm-3-1', productCode: 'PROD003', productName: 'Teclado Mecânico Keychron K2', quantityOrdered: 3, unitPrice: 650.00 },
-      { id: 'itm-3-2', productCode: 'PROD002', productName: 'Monitor LG UltraWide 29"', quantityOrdered: 8, unitPrice: 1299.00 },
-    ],
-    notes: 'Compra via e-commerce.',
-  },
-  {
-    id: 'ord-1004',
-    orderNumber: 'PED-1004',
-    clientName: 'Alfa Engenharia e Sistemas',
-    date: '2026-07-14',
-    priority: 'Alta',
-    items: [
-      { id: 'itm-4-1', productCode: 'PROD006', productName: 'Smartphone Samsung Galaxy S23', quantityOrdered: 2, unitPrice: 4200.00 },
-      { id: 'itm-4-2', productCode: 'PROD004', productName: 'Mouse Sem Fio Logitech MX Master 3', quantityOrdered: 5, unitPrice: 499.00 },
-    ],
-    notes: 'Retirada agendada pelo cliente.',
-  },
-  {
-    id: 'ord-011351',
-    orderNumber: '011351',
-    clientName: 'CUMMINS BRASIL LTDA',
-    date: '2026-08-21',
-    priority: 'Média',
-    items: [
-      { id: 'itm-011351-1', productCode: 'FST-951R', productName: 'DETECTOR FST-951R', quantityOrdered: 15, unitPrice: 372.1847 },
-      { id: 'itm-011351-2', productCode: 'FSP-951', productName: 'DETEC FUM FOTOEL FSP-951', quantityOrdered: 85, unitPrice: 445.9151 },
-      { id: 'itm-011351-3', productCode: 'B501-WHITE', productName: 'BASE DETECTOR B501-WHITE UNITARY', quantityOrdered: 100, unitPrice: 58.3695 },
-      { id: 'itm-011351-4', productCode: 'ISO-X', productName: 'MODULO ISOLADOR DE FALHA ISO-X', quantityOrdered: 6, unitPrice: 387.6974 },
-    ],
-    notes: 'Pedido importado via integração.',
-  },
-  {
-    id: 'ord-011409',
-    orderNumber: '011409',
-    clientName: 'FIRE LOOK SISTEMAS DE INCENDIO LTDA',
-    date: '2026-08-31',
-    priority: 'Média',
-    items: [
-      { id: 'itm-011409-1', productCode: 'HPF-PS10E', productName: 'F ALIMEN REMOT -HPF-PS10E-RED', quantityOrdered: 1, unitPrice: 3582.46 },
-      { id: 'itm-011409-2', productCode: 'FSP-951', productName: 'DETEC FUM FOTOEL FSP-951', quantityOrdered: 4, unitPrice: 279.0625 },
-      { id: 'itm-011409-3', productCode: 'B501-WHITE', productName: 'BASE DETECTOR B501-WHITE UNITARY', quantityOrdered: 4, unitPrice: 36.95 },
-    ],
-    notes: 'Pedido importado via integração.',
-  }
-];
+export const INITIAL_ORDERS: OrderHeader[] = [];
 
 export function getStoredStock(): StockBalance[] {
   const data = localStorage.getItem('expedicao_stock');

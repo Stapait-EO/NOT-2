@@ -440,11 +440,15 @@ export default function ProductsTable({
 
   // Filter products based on search term & category
   const filteredProducts = useMemo(() => {
+    const term = searchTerm.toLowerCase().trim();
     return products.filter(p => {
       const matchesSearch = 
-        p.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (p.category && p.category.toLowerCase().includes(searchTerm.toLowerCase()));
+        !term ||
+        p.code.toLowerCase().includes(term) ||
+        p.name.toLowerCase().includes(term) ||
+        (p.category && p.category.toLowerCase().includes(term)) ||
+        (p.codigo && p.codigo.toLowerCase().includes(term)) ||
+        (p.pr_cod !== undefined && String(p.pr_cod).toLowerCase().includes(term));
         
       const matchesCategory = 
         selectedCategoryFilter === 'Todos' || 
@@ -759,8 +763,8 @@ export default function ProductsTable({
                   </td>
                 </tr>
               ) : (
-                filteredProducts.map((prod) => (
-                  <tr key={prod.code} className="hover:bg-slate-50/50 transition-colors">
+                filteredProducts.map((prod, index) => (
+                  <tr key={`${prod.code}-${prod.pr_cod ?? ''}-${prod.codigo ?? ''}-${index}`} className="hover:bg-slate-50/50 transition-colors">
                     
                     {/* Code */}
                     <td className="py-4 px-6 font-mono text-xs font-bold text-indigo-950">

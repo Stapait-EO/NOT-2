@@ -1444,62 +1444,54 @@ export default function StockTable({
               </button>
             )}
             
-            {canManageStock ? (
-              <>
-                <button
-                  id="btn-update-stock"
-                  onClick={handleExecuteUpdate}
-                  disabled={isUpdating}
-                  className={`flex items-center justify-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg shadow-sm transition-all cursor-pointer border ${
-                    isUpdating 
-                      ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
-                      : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500 hover:shadow-indigo-500/10'
-                  }`}
-                  title="Apagar dados locais e atualizar importando os dados reais através do Webhook configurado"
-                >
-                  {isUpdating ? (
-                    <>
-                      <svg className="animate-spin h-4 w-4 text-emerald-600" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      <span>Atualizando...</span>
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="h-4 w-4" />
-                      <span>Atualizar</span>
-                    </>
-                  )}
-                </button>
+            {/* Botão Atualizar visível para todos os usuários */}
+            <button
+              id="btn-update-stock"
+              onClick={handleExecuteUpdate}
+              disabled={isUpdating}
+              className={`flex items-center justify-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg shadow-sm transition-all cursor-pointer border ${
+                isUpdating 
+                  ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                  : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500 hover:shadow-indigo-500/10'
+              }`}
+              title="Apagar dados locais e atualizar importando os dados reais através do Webhook configurado"
+            >
+              {isUpdating ? (
+                <>
+                  <svg className="animate-spin h-4 w-4 text-emerald-600" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <span>Atualizando...</span>
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-4 w-4" />
+                  <span>Atualizar</span>
+                </>
+              )}
+            </button>
 
-                {isMasterOrAdmin && stock.length > 0 && (
-                  <button
-                    id="btn-clear-all-stock"
-                    onClick={() => setIsClearAllConfirmOpen(true)}
-                    className="flex items-center justify-center gap-2 border border-rose-200 text-rose-700 hover:bg-rose-50 px-3.5 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer"
-                    title="Excluir todos os saldos de estoque do sistema"
-                  >
-                    <Trash2 className="h-4 w-4 text-rose-500" />
-                    <span>Excluir</span>
-                  </button>
-                )}
-                {isMasterOrAdmin && (
-                  <button
-                    id="btn-add-stock-balance"
-                    onClick={handleOpenAddModal}
-                    className="flex items-center justify-center gap-2 bg-indigo-600 text-white hover:bg-indigo-700 px-3.5 py-2 text-sm font-semibold rounded-lg shadow-sm transition-colors cursor-pointer"
-                  >
-                    <Plus className="h-4 w-4" />
-                    Lançar
-                  </button>
-                )}
-              </>
-            ) : (
-              <div className="flex items-center gap-1.5 px-3 py-2 bg-slate-50 border border-slate-200 text-slate-400 text-xs font-semibold rounded-lg select-none">
-                <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
-                <span>Apenas visualização do estoque</span>
-              </div>
+            {isMasterOrAdmin && stock.length > 0 && (
+              <button
+                id="btn-clear-all-stock"
+                onClick={() => setIsClearAllConfirmOpen(true)}
+                className="flex items-center justify-center gap-2 border border-rose-200 text-rose-700 hover:bg-rose-50 px-3.5 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer"
+                title="Excluir todos os saldos de estoque do sistema"
+              >
+                <Trash2 className="h-4 w-4 text-rose-500" />
+                <span>Excluir</span>
+              </button>
+            )}
+            {isMasterOrAdmin && (
+              <button
+                id="btn-add-stock-balance"
+                onClick={handleOpenAddModal}
+                className="flex items-center justify-center gap-2 bg-indigo-600 text-white hover:bg-indigo-700 px-3.5 py-2 text-sm font-semibold rounded-lg shadow-sm transition-colors cursor-pointer"
+              >
+                <Plus className="h-4 w-4" />
+                Lançar
+              </button>
             )}
           </div>
         </div>

@@ -1,3 +1,31 @@
+# Prevent directory browsing
+Options -Indexes
+
+# =======================================================
+# SECURITY RULES
+# Block direct HTTP access to JSON, SQL, LOG, ENV and backup files
+# =======================================================
+<FilesMatch "(^#.*#|\.(bak|config|dist|fla|inc|ini|log|psd|sh|sql|sw[op]|json|lock|env)|~)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# Explicit protection for db.json or any database files
+<Files "db.json">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</Files>
+
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
