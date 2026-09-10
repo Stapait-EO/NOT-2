@@ -1,5 +1,11 @@
+# Prevent directory browsing
+Options -Indexes
+
+# Set directory index to index.php
+DirectoryIndex index.php
+
 # Prevent direct access to any data/json files inside API directory
-<FilesMatch "\.(json|sql|log|txt|bak|lock)$">
+<FilesMatch "\.(json|jason|sql|log|txt|bak|lock|env)$">
   <IfModule mod_authz_core.c>
     Require all denied
   </IfModule>
@@ -8,5 +14,3 @@
     Deny from all
   </IfModule>
 </FilesMatch>
-
-Options -Indexes

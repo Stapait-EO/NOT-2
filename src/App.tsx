@@ -93,70 +93,94 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
 
   // Track if initial load from the backend has completed
   const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const [activeApiEndpoint, setActiveApiEndpoint] = useState<string>('api/db');
 
-  // 1. Initial Load from Backend Database File (via secure /api/db endpoint)
+  // 1. Initial Load from Backend Database File (with multi-path fallback for cPanel subfolders)
   useEffect(() => {
     const loadData = async () => {
-      try {
-        const token = getStoredSSOToken();
-        const headers: Record<string, string> = {
-          'Cache-Control': 'no-cache',
-          'X-Requested-With': 'XMLHttpRequest'
-        };
-        if (token) {
-          headers['Authorization'] = `Bearer ${token}`;
-        }
+      const candidateEndpoints = [
+        'api/db',
+        '/api/db',
+        'api/db.php',
+        '/api/db.php',
+        'api/db/index.php',
+        '/api/db/index.php'
+      ];
 
-        const response = await fetch('/api/db', {
-          headers,
-          cache: 'no-cache'
-        });
+      const token = getStoredSSOToken();
+      const headers: Record<string, string> = {
+        'Cache-Control': 'no-cache',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json'
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
 
-        if (response.ok) {
-          const data = await response.json();
-          if (data) {
-            if (Array.isArray(data.stock) && data.stock.length > 0) {
-              setStock(data.stock);
-              setStoredStock(data.stock);
-            }
-            if (Array.isArray(data.orders) && data.orders.length > 0) {
-              setOrders(data.orders);
-              setStoredOrders(data.orders);
-            }
-            if (Array.isArray(data.products) && data.products.length > 0) {
-              setProducts(data.products);
-              setStoredProducts(data.products);
-            }
-            if (Array.isArray(data.users) && data.users.length > 0) {
-              setUsers(data.users);
-              setStoredUsers(data.users);
-            }
-            if (Array.isArray(data.webhooks) && data.webhooks.length > 0) {
-              setWebhooks(data.webhooks);
-              setStoredWebhooks(data.webhooks);
-            }
-            if (Array.isArray(data.fieldMappings) && data.fieldMappings.length > 0) {
-              setFieldMappings(data.fieldMappings);
-              setStoredFieldMappings(data.fieldMappings);
-            }
-            if (Array.isArray(data.warehouses) && data.warehouses.length > 0) {
-              setWarehouses(data.warehouses);
-              setStoredWarehouses(data.warehouses);
-            }
-            if (Array.isArray(data.sales) && data.sales.length > 0) {
-              setSales(data.sales);
-              setStoredSales(data.sales);
+      let loadedData: any = null;
+      let workingEndpoint = 'api/db';
+
+      for (const endpoint of candidateEndpoints) {
+        try {
+          const response = await fetch(endpoint, {
+            headers,
+            cache: 'no-cache'
+          });
+
+          const contentType = response.headers.get('content-type') || '';
+          if (response.ok && contentType.includes('json')) {
+            const data = await response.json();
+            // Verify it's a valid database payload
+            if (data && typeof data === 'object') {
+              loadedData = data;
+              workingEndpoint = endpoint;
+              break;
             }
           }
-        } else {
-          console.warn("Servidor respondeu com status", response.status);
+        } catch (e) {
+          // continue to next candidate
         }
-      } catch (err) {
-        console.error("Erro ao carregar dados do servidor:", err);
-      } finally {
-        setInitialLoadDone(true);
       }
+
+      setActiveApiEndpoint(workingEndpoint);
+
+      if (loadedData) {
+        if (Array.isArray(loadedData.stock) && loadedData.stock.length > 0) {
+          setStock(loadedData.stock);
+          setStoredStock(loadedData.stock);
+        }
+        if (Array.isArray(loadedData.orders) && loadedData.orders.length > 0) {
+          setOrders(loadedData.orders);
+          setStoredOrders(loadedData.orders);
+        }
+        if (Array.isArray(loadedData.products) && loadedData.products.length > 0) {
+          setProducts(loadedData.products);
+          setStoredProducts(loadedData.products);
+        }
+        if (Array.isArray(loadedData.users) && loadedData.users.length > 0) {
+          setUsers(loadedData.users);
+          setStoredUsers(loadedData.users);
+        }
+        if (Array.isArray(loadedData.webhooks) && loadedData.webhooks.length > 0) {
+          setWebhooks(loadedData.webhooks);
+          setStoredWebhooks(loadedData.webhooks);
+        }
+        if (Array.isArray(loadedData.fieldMappings) && loadedData.fieldMappings.length > 0) {
+          setFieldMappings(loadedData.fieldMappings);
+          setStoredFieldMappings(loadedData.fieldMappings);
+        }
+        if (Array.isArray(loadedData.warehouses) && loadedData.warehouses.length > 0) {
+          setWarehouses(loadedData.warehouses);
+          setStoredWarehouses(loadedData.warehouses);
+        }
+        if (Array.isArray(loadedData.sales) && loadedData.sales.length > 0) {
+          setSales(loadedData.sales);
+          setStoredSales(loadedData.sales);
+        }
+      }
+      setInitialLoadDone(true);
     };
+
     loadData();
   }, []);
 
@@ -164,20 +188,21 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
   useEffect(() => {
     if (!initialLoadDone) return;
     // CRITICAL: Never overwrite server database with empty lists
-    if (stock.length === 0 && products.length === 0) return;
+    if (stock.length === 0 && products.length === 0 && webhooks.length === 0) return;
 
     const syncToBackend = async () => {
       try {
         const token = getStoredSSOToken();
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest'
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
         };
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
 
-        await fetch('/api/db', {
+        await fetch(activeApiEndpoint || 'api/db', {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -197,9 +222,9 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
     };
 
     // Debounce to prevent hammering the server during multi-edits or fast inputs
-    const timeoutId = setTimeout(syncToBackend, 500);
+    const timeoutId = setTimeout(syncToBackend, 600);
     return () => clearTimeout(timeoutId);
-  }, [stock, orders, products, users, webhooks, fieldMappings, warehouses, sales, initialLoadDone]);
+  }, [stock, orders, products, users, webhooks, fieldMappings, warehouses, sales, initialLoadDone, activeApiEndpoint]);
 
   const handleUpdateWarehouses = (updatedWarehouses: Warehouse[]) => {
     setWarehouses(updatedWarehouses);

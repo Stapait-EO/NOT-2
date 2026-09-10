@@ -1,6 +1,9 @@
 # Prevent directory browsing
 Options -Indexes
 
+# Set default directory index handlers
+DirectoryIndex index.html index.php
+
 # =======================================================
 # SECURITY RULES
 # Block direct HTTP access to JSON, SQL, LOG, ENV and backup files
@@ -15,7 +18,7 @@ Options -Indexes
   </IfModule>
 </FilesMatch>
 
-# Explicit protection for db.json or any database files
+# Explicit protection for any db.json files
 <Files "db.json">
   <IfModule mod_authz_core.c>
     Require all denied
@@ -28,16 +31,18 @@ Options -Indexes
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
-  RewriteBase /
 
-  # Do not rewrite actual files or directories
+  # Explicit API routes: route directly to PHP handler with Query String Append
+  RewriteRule ^api/db/?$ api/db/index.php [L,QSA]
+  RewriteRule ^api/db\.php$ api/db/index.php [L,QSA]
+  RewriteRule ^api/.*\.php$ - [L]
+
+  # Do not rewrite existing files or directories
   RewriteCond %{REQUEST_FILENAME} -f [OR]
   RewriteCond %{REQUEST_FILENAME} -d
   RewriteRule ^ - [L]
 
-  # Allow direct access to API scripts and endpoints (never return index.html for APIs)
-  RewriteRule ^api/ - [L]
-
+  # SPA Fallback: send non-file requests to index.html
   RewriteRule ^index\.html$ - [L]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d

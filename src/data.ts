@@ -117,34 +117,48 @@ export function setStoredUsers(users: UserAccount[]): void {
 
 export const INITIAL_WEBHOOKS: WebhookConfig[] = [
   {
-    id: 'wh-1',
+    id: "wh-1",
     seq: 1,
-    tableName: 'StockBalance',
-    url: 'https://api.empresa.com/v1/stock-updates',
-    secretKey: 'sec_stock_123456789',
-    filterCondition: 'quantity > 0',
-    createdAt: '2026-07-14T09:00:00.000Z',
-    isActive: true
+    tableName: "MYBI_PRD_NOTIFIER",
+    url: "https://mifire.com.br/wh-finan.php",
+    secretKey: "c9211efc48ddf332ed8927f8769a45bc4a5c20356a04baae0825bd7de5e9198d",
+    filterCondition: "",
+    createdAt: "2026-07-14T09:00:00.000Z",
+    isActive: true,
+    targetScreen: "products"
   },
   {
-    id: 'wh-2',
+    id: "wh-2",
     seq: 2,
-    tableName: 'OrderHeader',
-    url: 'https://api.empresa.com/v1/new-orders',
-    secretKey: 'sec_orders_987654321',
-    filterCondition: 'priority == "Alta"',
-    createdAt: '2026-07-14T09:10:00.000Z',
-    isActive: true
+    tableName: "PED_PERIODO",
+    url: "https://mifire.com.br/wh-finan.php",
+    secretKey: "c9211efc48ddf332ed8927f8769a45bc4a5c20356a04baae0825bd7de5e9198d",
+    filterCondition: 'Status not in ("Fat_OK","Cancel") and i_codProd not in ("9010-00050","9010-00045","9010-00044","9010-00039") and i_Status not in ("Bx")',
+    createdAt: "2026-07-14T09:10:00.000Z",
+    isActive: true,
+    targetScreen: "orders"
   },
   {
-    id: 'wh-3',
+    id: "wh-3",
     seq: 3,
-    tableName: 'ProdutosSistema',
-    url: 'https://api.empresa.com/v1/sistema-products',
-    secretKey: 'sec_sistema_333333333',
-    filterCondition: 'status == "active"',
-    createdAt: '2026-07-14T09:20:00.000Z',
-    isActive: true
+    tableName: "MYBI_STK_NOTIFIER",
+    url: "https://mifire.com.br/wh-finan.php",
+    secretKey: "c9211efc48ddf332ed8927f8769a45bc4a5c20356a04baae0825bd7de5e9198d",
+    filterCondition: 'Cdgrupo not in ("RESERVA","COMPRA")',
+    createdAt: "2026-07-14T09:20:00.000Z",
+    isActive: true,
+    targetScreen: "stock"
+  },
+  {
+    id: "wh-1788380617219",
+    seq: 4,
+    tableName: "MYBI_EST_NOT",
+    url: "https://mifire.com.br/wh-finan.php",
+    secretKey: "c9211efc48ddf332ed8927f8769a45bc4a5c20356a04baae0825bd7de5e9198d",
+    filterCondition: "",
+    createdAt: "2026-09-02T20:23:37.219Z",
+    isActive: true,
+    targetScreen: "sales"
   }
 ];
 
@@ -153,10 +167,12 @@ export function getStoredWebhooks(): WebhookConfig[] {
   if (data) {
     try {
       const parsed = JSON.parse(data) as any[];
-      return parsed.map(w => ({
-        ...w,
-        isActive: w.isActive !== undefined ? w.isActive : true
-      })) as WebhookConfig[];
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map(w => ({
+          ...w,
+          isActive: w.isActive !== undefined ? w.isActive : true
+        })) as WebhookConfig[];
+      }
     } catch {
       return INITIAL_WEBHOOKS;
     }
@@ -171,60 +187,66 @@ export function setStoredWebhooks(webhooks: WebhookConfig[]): void {
 
 export const INITIAL_MAPPINGS: FieldMapping[] = [
   {
-    id: 'map-stock-wh3',
-    webhookId: 'wh-3',
-    systemTable: 'StockBalance',
+    id: "map-1788366944094",
+    webhookId: "wh-1",
+    systemTable: "Product",
     mappings: {
-      productCode: 'modelo',
-      productName: 'descricao',
-      warehouse: 'cdgrupo',
-      quantity: 'qtdest',
-      pr_cod: 'pr_cod',
-      codigo: 'codigo',
-      lote: 'marca',
-      pr_preco: 'pr_preco',
-      vlrest: 'vlrest'
+      code: "modelo",
+      name: "descricao",
+      category: "grupo",
+      pr_cod: "pr_cod",
+      codigo: "codigo",
+      avgQty1x: "custopdr",
+      avgQty3x: "pr_preco"
     },
-    updatedAt: '2026-09-02T18:51:11.437Z'
+    updatedAt: "2026-09-02T16:35:44.094Z"
   },
   {
-    id: 'map-1',
-    webhookId: 'wh-1',
-    systemTable: 'StockBalance',
+    id: "map-1788368304869",
+    webhookId: "wh-2",
+    systemTable: "OrderHeader",
     mappings: {
-      id: 'id_estoque',
-      productCode: 'codigo_produto',
-      productName: 'nome_produto',
-      warehouse: 'deposito',
-      quantity: 'quantidade_atual'
+      id: "Numero",
+      orderNumber: "Numero",
+      clientName: "Nome_Clien",
+      date: "Data_Ped",
+      items: "i_Seq",
+      itemProductCode: "i_Modelo",
+      itemQuantity: "i_Qtdade",
+      itemUnitPrice: "i_Preco"
     },
-    updatedAt: '2026-07-14T09:00:00.000Z'
+    updatedAt: "2026-09-02T18:09:18.253Z"
   },
   {
-    id: 'map-2',
-    webhookId: 'wh-2',
-    systemTable: 'OrderHeader',
+    id: "map-1788373184564",
+    webhookId: "wh-3",
+    systemTable: "StockBalance",
     mappings: {
-      id: 'id_pedido',
-      orderNumber: 'numero_controle',
-      clientName: 'cliente',
-      date: 'data_criacao',
-      priority: 'prioridade_envio',
-      notes: 'observacao_pedido'
+      productCode: "Modelo",
+      productName: "Descricao",
+      warehouse: "cdgrupo",
+      quantity: "qtdEst",
+      pr_cod: "pr_cod",
+      codigo: "Codigo",
+      lote: "Marca",
+      pr_preco: "pr_preco",
+      vlrest: "vlrEst"
     },
-    updatedAt: '2026-07-14T09:10:00.000Z'
+    updatedAt: "2026-09-02T18:51:11.437Z"
   },
   {
-    id: 'map-3',
-    webhookId: 'wh-3',
-    systemTable: 'ProdutosSistema',
+    id: "map-1788381559003",
+    webhookId: "wh-1788380617219",
+    systemTable: "SaleRecord",
     mappings: {
-      orderNumber: 'numero_pedido',
-      itemProductCode: 'codigo_produto',
-      itemQuantity: 'quantidade',
-      itemUnitPrice: 'preco_unitario'
+      sku: "Modelo",
+      month: "MES",
+      year: "2ANO",
+      quantity: "qtdEst",
+      date: "DATA",
+      notes: "Tipo"
     },
-    updatedAt: '2026-07-14T09:20:00.000Z'
+    updatedAt: "2026-09-02T20:39:19.003Z"
   }
 ];
 
