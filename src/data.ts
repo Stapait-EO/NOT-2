@@ -53,7 +53,19 @@ export function getStoredProducts(): Product[] {
   const data = localStorage.getItem('expedicao_products');
   if (data) {
     try {
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed)) {
+        const seen = new Set<string>();
+        const deduped: Product[] = [];
+        for (const p of parsed) {
+          const key = (p.code || '').trim().toUpperCase();
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          deduped.push(p);
+        }
+        return deduped;
+      }
+      return parsed;
     } catch {
       return INITIAL_PRODUCTS;
     }
@@ -62,7 +74,15 @@ export function getStoredProducts(): Product[] {
 }
 
 export function setStoredProducts(products: Product[]): void {
-  localStorage.setItem('expedicao_products', JSON.stringify(products));
+  const seen = new Set<string>();
+  const deduped: Product[] = [];
+  for (const p of products) {
+    const key = (p.code || '').trim().toUpperCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(p);
+  }
+  localStorage.setItem('expedicao_products', JSON.stringify(deduped));
 }
 
 
@@ -125,7 +145,8 @@ export const INITIAL_WEBHOOKS: WebhookConfig[] = [
     filterCondition: "",
     createdAt: "2026-07-14T09:00:00.000Z",
     isActive: true,
-    targetScreen: "products"
+    targetScreen: "products",
+    execution: "Manual"
   },
   {
     id: "wh-2",
@@ -136,7 +157,8 @@ export const INITIAL_WEBHOOKS: WebhookConfig[] = [
     filterCondition: 'Status not in ("Fat_OK","Cancel") and i_codProd not in ("9010-00050","9010-00045","9010-00044","9010-00039") and i_Status not in ("Bx")',
     createdAt: "2026-07-14T09:10:00.000Z",
     isActive: true,
-    targetScreen: "orders"
+    targetScreen: "orders",
+    execution: "Manual"
   },
   {
     id: "wh-3",
@@ -147,7 +169,8 @@ export const INITIAL_WEBHOOKS: WebhookConfig[] = [
     filterCondition: 'Cdgrupo not in ("RESERVA","COMPRA")',
     createdAt: "2026-07-14T09:20:00.000Z",
     isActive: true,
-    targetScreen: "stock"
+    targetScreen: "stock",
+    execution: "Manual"
   },
   {
     id: "wh-1788380617219",
@@ -158,7 +181,8 @@ export const INITIAL_WEBHOOKS: WebhookConfig[] = [
     filterCondition: "",
     createdAt: "2026-09-02T20:23:37.219Z",
     isActive: true,
-    targetScreen: "sales"
+    targetScreen: "sales",
+    execution: "Manual"
   }
 ];
 
@@ -170,7 +194,8 @@ export function getStoredWebhooks(): WebhookConfig[] {
       if (Array.isArray(parsed) && parsed.length > 0) {
         return parsed.map(w => ({
           ...w,
-          isActive: w.isActive !== undefined ? w.isActive : true
+          isActive: w.isActive !== undefined ? w.isActive : true,
+          execution: w.execution || 'Manual'
         })) as WebhookConfig[];
       }
     } catch {

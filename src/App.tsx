@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Layers, 
   Building, 
@@ -54,6 +54,8 @@ import ProductsTable from './components/ProductsTable';
 import { SalesTable } from './components/SalesTable';
 import Migration from './components/Migration';
 import SSOGuard from './components/SSOGuard';
+import { AutoSyncNotification, AutoSyncState } from './components/AutoSyncNotification';
+import { executeAutomaticWebhooks } from './utils/webhookSync';
 
 export default function App() {
   return (
@@ -154,8 +156,16 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
           setStoredOrders(loadedData.orders);
         }
         if (Array.isArray(loadedData.products) && loadedData.products.length > 0) {
-          setProducts(loadedData.products);
-          setStoredProducts(loadedData.products);
+          const seen = new Set<string>();
+          const dedupedProducts: Product[] = [];
+          for (const p of loadedData.products) {
+            const key = (p.code || '').trim().toUpperCase();
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            dedupedProducts.push(p);
+          }
+          setProducts(dedupedProducts);
+          setStoredProducts(dedupedProducts);
         }
         if (Array.isArray(loadedData.users) && loadedData.users.length > 0) {
           setUsers(loadedData.users);
@@ -291,15 +301,32 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
 
   // Dynamically add a product when launching a stock balance of an unlisted product code
   const handleAddProduct = (newProd: Product) => {
-    const updated = [...products, newProd];
+    const key = newProd.code.trim().toUpperCase();
+    const existingIndex = products.findIndex(p => p.code.trim().toUpperCase() === key);
+    let updated: Product[];
+    if (existingIndex >= 0) {
+      updated = products.map((p, i) => i === existingIndex ? { ...p, ...newProd } : p);
+    } else {
+      updated = [...products, newProd];
+    }
     setProducts(updated);
     setStoredProducts(updated);
   };
 
   const handleEditProduct = (oldCode: string, editedProd: Product) => {
-    const updated = products.map(p => p.code === oldCode ? editedProd : p);
-    setProducts(updated);
-    setStoredProducts(updated);
+    const normOldCode = oldCode.trim().toUpperCase();
+    const updated = products.map(p => p.code.trim().toUpperCase() === normOldCode ? editedProd : p);
+    // Ensure uniqueness
+    const seen = new Set<string>();
+    const deduped: Product[] = [];
+    for (const p of updated) {
+      const key = (p.code || '').trim().toUpperCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(p);
+    }
+    setProducts(deduped);
+    setStoredProducts(deduped);
   };
 
   const handleDeleteProduct = (code: string) => {
@@ -607,6 +634,131 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
     }
   };
 
+  // Reference container for latest state values to avoid stale closures during async sync
+  const latestDataRef = useRef({
+    webhooks,
+    fieldMappings,
+    products,
+    warehouses,
+    stock,
+    orders,
+    sales
+  });
+
+  useEffect(() => {
+    latestDataRef.current = {
+      webhooks,
+      fieldMappings,
+      products,
+      warehouses,
+      stock,
+      orders,
+      sales
+    };
+  }, [webhooks, fieldMappings, products, warehouses, stock, orders, sales]);
+
+  // Automatic webhook execution state
+  const [autoSyncStatus, setAutoSyncStatus] = useState<AutoSyncState>({
+    isRunning: false,
+    executedCount: 0,
+    successfulCount: 0,
+    failedCount: 0,
+    details: [],
+    visible: false
+  });
+
+  const autoSyncDoneRef = useRef(false);
+
+  // Reset auto-sync flag if user logs out or switches
+  useEffect(() => {
+    autoSyncDoneRef.current = false;
+  }, [currentUser?.id]);
+
+  const runAutomaticSync = useCallback(async (customWebhooks?: WebhookConfig[]) => {
+    const targetWebhooks = customWebhooks || latestDataRef.current.webhooks;
+    const autoWebhooks = targetWebhooks.filter(wh => wh.isActive && wh.execution === 'Automática');
+
+    if (autoWebhooks.length === 0) {
+      return;
+    }
+
+    setAutoSyncStatus({
+      isRunning: true,
+      executedCount: autoWebhooks.length,
+      successfulCount: 0,
+      failedCount: 0,
+      details: [],
+      visible: true
+    });
+
+    try {
+      const summary = await executeAutomaticWebhooks({
+        webhooks: targetWebhooks,
+        fieldMappings: latestDataRef.current.fieldMappings,
+        currentProducts: latestDataRef.current.products,
+        currentWarehouses: latestDataRef.current.warehouses,
+        onImportProducts: (imported, overwrite) => handleImportProducts(imported, overwrite),
+        onImportOrders: (imported, overwrite) => handleImportOrders(imported, overwrite),
+        onImportStock: (imported, overwrite) => handleImportStock(imported, overwrite),
+        onUpdateWarehouses: (whs) => handleUpdateWarehouses(whs),
+        onImportSales: (imported, overwrite) => handleImportSales(imported, overwrite)
+      });
+
+      const timeStr = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      setAutoSyncStatus({
+        isRunning: false,
+        executedCount: summary.executedCount,
+        successfulCount: summary.successfulCount,
+        failedCount: summary.failedCount,
+        details: summary.results.map(r => ({
+          name: r.webhookName,
+          target: r.target,
+          count: r.count,
+          success: r.success,
+          error: r.error
+        })),
+        completedAt: timeStr,
+        visible: true
+      });
+
+      // Auto dismiss if all succeeded after 8 seconds
+      if (summary.failedCount === 0) {
+        setTimeout(() => {
+          setAutoSyncStatus(prev => ({ ...prev, visible: false }));
+        }, 8000);
+      }
+    } catch (err: any) {
+      setAutoSyncStatus({
+        isRunning: false,
+        executedCount: autoWebhooks.length,
+        successfulCount: 0,
+        failedCount: autoWebhooks.length,
+        details: [{
+          name: 'Sincronização Automática',
+          target: 'APIs',
+          count: 0,
+          success: false,
+          error: err.message || 'Falha de comunicação com o servidor'
+        }],
+        visible: true
+      });
+    }
+  }, []);
+
+  // Trigger automatic sync once the initial database load is done
+  useEffect(() => {
+    if (!initialLoadDone || autoSyncDoneRef.current) return;
+
+    const hasAuto = webhooks.some(wh => wh.isActive && wh.execution === 'Automática');
+    if (hasAuto) {
+      autoSyncDoneRef.current = true;
+      const timer = setTimeout(() => {
+        runAutomaticSync();
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [initialLoadDone, webhooks, runAutomaticSync]);
+
   // STATISTICS COMPUTATION for top metrics banner
   const stats = {
     totalStockUnits: stock.reduce((acc, curr) => acc + curr.quantity, 0),
@@ -753,6 +905,13 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
           </div>
         </div>
       </header>
+
+      {/* Automatic Webhook Sync Status Notification Banner */}
+      <AutoSyncNotification
+        status={autoSyncStatus}
+        onClose={() => setAutoSyncStatus(prev => ({ ...prev, visible: false }))}
+        onRetry={() => runAutomaticSync()}
+      />
 
       {/* Dynamic Summary Banner - Visible only on Dashboard */}
       {activeTab === 'dashboard' && (
@@ -910,6 +1069,8 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
             orders={orders}
             products={products}
             users={users}
+            isAutoSyncRunning={autoSyncStatus.isRunning}
+            onTriggerAutoSync={() => runAutomaticSync()}
           />
         )}
 

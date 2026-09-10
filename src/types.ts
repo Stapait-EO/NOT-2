@@ -36,6 +36,13 @@ export interface Warehouse {
   groupName: string;
 }
 
+export interface CorrelatedItem {
+  id: string;
+  code: string;
+  multiplier: number;
+  description?: string;
+}
+
 export interface Product {
   code: string;
   name: string;
@@ -45,6 +52,9 @@ export interface Product {
   lote?: string;
   avgQty1x?: number;
   avgQty3x?: number;
+  correlationCode?: string;
+  correlationMultiplier?: number;
+  correlations?: CorrelatedItem[];
 }
 
 export type UserRole = 'admin' | 'vendedor' | 'almoxarife' | 'user' | string;
@@ -89,6 +99,7 @@ export interface WebhookConfig {
   createdAt: string;
   isActive: boolean;
   targetScreen?: string;
+  execution?: 'Automática' | 'Manual';
 }
 
 export interface FieldMapping {

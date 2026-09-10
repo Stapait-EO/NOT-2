@@ -651,11 +651,81 @@ export default function StockTable({
     return map;
   }, [orders]);
 
-  const getProductOrdersSummary = (productCode: string) => {
+  // Product correlations lookup:
+  // Maps child product codes to their parent product code and multiplier,
+  // and parent product codes to their list of children with multipliers.
+  const correlationMaps = useMemo(() => {
+    const childToParent = new Map<string, { parentCode: string; multiplier: number }>();
+    const parentToChildren = new Map<string, { code: string; multiplier: number; description?: string }[]>();
+
+    products.forEach(p => {
+      const parentKey = (p.code || '').trim().toUpperCase();
+      if (!parentKey) return;
+
+      const corrs: { code: string; multiplier: number; description?: string }[] = [];
+      if (Array.isArray(p.correlations)) {
+        p.correlations.forEach(c => {
+          const cCode = (c.code || '').trim().toUpperCase();
+          const mult = Number(c.multiplier) || 1;
+          if (cCode && cCode !== parentKey && mult > 0) {
+            corrs.push({ code: cCode, multiplier: mult, description: c.description });
+          }
+        });
+      }
+      if (p.correlationCode) {
+        const cCode = p.correlationCode.trim().toUpperCase();
+        const mult = Number(p.correlationMultiplier) || 1;
+        if (cCode && cCode !== parentKey && mult > 0 && !corrs.some(c => c.code === cCode)) {
+          corrs.push({ code: cCode, multiplier: mult });
+        }
+      }
+
+      if (corrs.length > 0) {
+        parentToChildren.set(parentKey, corrs);
+        corrs.forEach(c => {
+          childToParent.set(c.code, { parentCode: parentKey, multiplier: c.multiplier });
+        });
+      }
+    });
+
+    return { childToParent, parentToChildren };
+  }, [products]);
+
+  const getProductOrdersSummary = useCallback((productCode: string) => {
     if (!productCode) return { totalQtyOrdered: 0, ordersCount: 0, ordersList: [] };
     const key = productCode.trim().toUpperCase();
-    return productOrdersMap.get(key) || { totalQtyOrdered: 0, ordersCount: 0, ordersList: [] };
-  };
+    const baseSummary = productOrdersMap.get(key) || { totalQtyOrdered: 0, ordersCount: 0, ordersList: [] };
+
+    // If this product is a parent with correlated children, also consolidate child open orders
+    const children = correlationMaps.parentToChildren.get(key);
+    if (!children || children.length === 0) {
+      return baseSummary;
+    }
+
+    let totalQty = baseSummary.totalQtyOrdered;
+    const combinedOrdersList = [...baseSummary.ordersList];
+
+    children.forEach(child => {
+      const childSummary = productOrdersMap.get(child.code);
+      if (childSummary && childSummary.totalQtyOrdered > 0) {
+        totalQty += childSummary.totalQtyOrdered * child.multiplier;
+        childSummary.ordersList.forEach(ord => {
+          combinedOrdersList.push({
+            ...ord,
+            quantityOrdered: ord.quantityOrdered * child.multiplier,
+            unitPrice: ord.unitPrice / child.multiplier,
+            totalPrice: ord.totalPrice
+          });
+        });
+      }
+    });
+
+    return {
+      totalQtyOrdered: totalQty,
+      ordersCount: combinedOrdersList.length,
+      ordersList: combinedOrdersList
+    };
+  }, [productOrdersMap, correlationMaps]);
 
   const totalProductsWithOrdersCount = useMemo(() => {
     let count = 0;
@@ -721,24 +791,43 @@ export default function StockTable({
   }, [warehouses, stock, getWarehouseGroup]);
 
   // Filtered Stock Balance list by search term, group, and open orders
+  // Supports searching by parent SKU, child SKU, or product name
   const filteredStock = useMemo(() => {
+    const term = searchTerm.toLowerCase().trim();
+
     return stock.filter(item => {
+      const rawCode = (item.productCode || '').trim();
+      const codeUpper = rawCode.toUpperCase();
+      const childRel = correlationMaps.childToParent.get(codeUpper);
+      const effectiveParentCode = childRel ? childRel.parentCode : codeUpper;
+      const parentProd = products.find(p => p.code.trim().toUpperCase() === effectiveParentCode);
+      const children = correlationMaps.parentToChildren.get(effectiveParentCode) || [];
+
+      // Matches search term
       const matchesSearch = 
-        item.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.productCode.toLowerCase().includes(searchTerm.toLowerCase());
+        !term ||
+        item.productName.toLowerCase().includes(term) ||
+        item.productCode.toLowerCase().includes(term) ||
+        effectiveParentCode.toLowerCase().includes(term) ||
+        (parentProd && parentProd.name.toLowerCase().includes(term)) ||
+        children.some(c => 
+          c.code.toLowerCase().includes(term) || 
+          (c.description && c.description.toLowerCase().includes(term))
+        );
       
       const itemGroup = getWarehouseGroup(item.warehouse);
       const matchesWarehouseGroup = 
         selectedWarehouseFilter === 'Todos' || 
         itemGroup.toLowerCase() === selectedWarehouseFilter.toLowerCase();
 
+      const ordersSummary = getProductOrdersSummary(effectiveParentCode);
       const matchesOpenOrders = 
         !filterOnlyWithOpenOrders || 
-        (getProductOrdersSummary(item.productCode).totalQtyOrdered > 0);
+        (ordersSummary.totalQtyOrdered > 0);
 
       return matchesSearch && matchesWarehouseGroup && matchesOpenOrders;
     });
-  }, [stock, searchTerm, selectedWarehouseFilter, filterOnlyWithOpenOrders, productOrdersMap, getWarehouseGroup]);
+  }, [stock, searchTerm, selectedWarehouseFilter, filterOnlyWithOpenOrders, correlationMaps, products, getProductOrdersSummary, getWarehouseGroup]);
 
   // Groups to display as columns in the consolidated view
   const displayedGroups = useMemo(() => {
@@ -750,10 +839,12 @@ export default function StockTable({
   }, [selectedWarehouseFilter, activeGroups]);
 
   // Grouped Stock items for the Consolidated Grid
+  // Merges child correlated items into their parent item, converting quantity and unit price
   const groupedStock = useMemo(() => {
     const map = new Map<string, {
       productCode: string;
       productName: string;
+      correlations?: { code: string; multiplier: number; description?: string }[];
       groups: {
         [groupName: string]: {
           quantity: number;
@@ -764,21 +855,33 @@ export default function StockTable({
     }>();
 
     filteredStock.forEach(item => {
-      const prod = products.find(p => p.code === item.productCode);
-      const displayPrPreco = item.pr_preco !== undefined ? item.pr_preco : ((prod as any)?.pr_preco || 0);
-      const displayVlrest = item.vlrest !== undefined ? item.vlrest : ((prod as any)?.vlrest || 0);
+      const rawCode = (item.productCode || '').trim();
+      const codeUpper = rawCode.toUpperCase();
+
+      // Check if this item is a child of another product
+      const childRel = correlationMaps.childToParent.get(codeUpper);
+      const effectiveParentCode = childRel ? childRel.parentCode : codeUpper;
+      const multiplier = childRel ? childRel.multiplier : 1;
+
+      // Find parent catalog record
+      const parentProd = products.find(p => p.code.trim().toUpperCase() === effectiveParentCode);
+      const itemProd = products.find(p => p.code.trim().toUpperCase() === codeUpper);
+
+      const displayPrPreco = item.pr_preco !== undefined ? item.pr_preco : ((itemProd as any)?.pr_preco || 0);
+      const displayVlrest = item.vlrest !== undefined ? item.vlrest : ((itemProd as any)?.vlrest || 0);
 
       const groupName = getWarehouseGroup(item.warehouse);
       if (groupName === 'Inativo') return; // Hide stock from inactive warehouses in consolidated view
 
-      let row = map.get(item.productCode);
+      let row = map.get(effectiveParentCode);
       if (!row) {
         row = {
-          productCode: item.productCode,
-          productName: item.productName || prod?.name || 'Produto Sem Nome',
+          productCode: parentProd?.code || effectiveParentCode,
+          productName: parentProd?.name || item.productName || 'Produto Sem Nome',
+          correlations: correlationMaps.parentToChildren.get(effectiveParentCode),
           groups: {}
         };
-        map.set(item.productCode, row);
+        map.set(effectiveParentCode, row);
       }
 
       if (!row.groups[groupName]) {
@@ -790,15 +893,21 @@ export default function StockTable({
       }
 
       const g = row.groups[groupName];
-      g.quantity += item.quantity;
-      g.sumPrPrecoTimesQty += item.quantity * displayPrPreco;
-      g.sumVlrestTimesQty += item.quantity * displayVlrest;
+      // Converted quantity: child quantity * multiplier (e.g. 371 * 10 = 3710 un)
+      const convertedQty = item.quantity * multiplier;
+      // Monetary values: item.quantity * displayPrPreco equals convertedQty * (displayPrPreco / multiplier)
+      const totalPrPreco = item.quantity * displayPrPreco;
+      const totalVlrest = item.quantity * displayVlrest;
+
+      g.quantity += convertedQty;
+      g.sumPrPrecoTimesQty += totalPrPreco;
+      g.sumVlrestTimesQty += totalVlrest;
     });
 
     return Array.from(map.values()).sort((a, b) => 
       a.productCode.localeCompare(b.productCode, undefined, { numeric: true, sensitivity: 'base' })
     );
-  }, [filteredStock, products, warehouses]);
+  }, [filteredStock, products, correlationMaps, getWarehouseGroup]);
 
   // Total sum of "Vr total médio" per group
   const groupTotals = useMemo(() => {
@@ -858,15 +967,41 @@ export default function StockTable({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [batchModalData]);
 
-  // Items belonging to this product and selected warehouse group
+  // Items belonging to this product (including correlated child items) and selected warehouse group
   const batchModalItems = useMemo(() => {
     if (!batchModalData?.isOpen) return [];
-    return stock.filter(item => {
-      if (item.productCode !== batchModalData.productCode) return false;
-      const grp = getWarehouseGroup(item.warehouse);
-      return grp === batchModalData.groupName;
-    });
-  }, [batchModalData, stock, warehouses]);
+    const targetParentCode = batchModalData.productCode.trim().toUpperCase();
+
+    return stock
+      .filter(item => {
+        const itemCodeUpper = (item.productCode || '').trim().toUpperCase();
+        const childRel = correlationMaps.childToParent.get(itemCodeUpper);
+        const effectiveParent = childRel ? childRel.parentCode : itemCodeUpper;
+        if (effectiveParent !== targetParentCode) return false;
+
+        const grp = getWarehouseGroup(item.warehouse);
+        return grp === batchModalData.groupName;
+      })
+      .map(item => {
+        const itemCodeUpper = (item.productCode || '').trim().toUpperCase();
+        const childRel = correlationMaps.childToParent.get(itemCodeUpper);
+        const multiplier = childRel ? childRel.multiplier : 1;
+
+        if (multiplier !== 1) {
+          const originalPrice = item.pr_preco !== undefined ? item.pr_preco : 0;
+          return {
+            ...item,
+            quantity: item.quantity * multiplier,
+            pr_preco: multiplier > 0 ? (originalPrice / multiplier) : originalPrice,
+            vlrest: item.vlrest !== undefined ? item.vlrest : (item.quantity * originalPrice),
+            _originalCode: item.productCode,
+            _originalQty: item.quantity,
+            _multiplier: multiplier
+          };
+        }
+        return item;
+      });
+  }, [batchModalData, stock, correlationMaps, getWarehouseGroup]);
 
   // Filtered and sorted items inside the batch modal
   const filteredBatchItems = useMemo(() => {
@@ -993,14 +1128,36 @@ export default function StockTable({
     return getProductOrdersSummary(ordersModalData.productCode);
   }, [ordersModalData, productOrdersMap]);
 
-  // Physical stock in total across all warehouses for the product in modal
+  // Physical stock in total across all warehouses for the product in modal (including correlated child items)
   const currentModalPhysicalStock = useMemo(() => {
     if (!ordersModalData?.isOpen) return 0;
     const targetCode = ordersModalData.productCode.trim().toUpperCase();
+
+    // Prefer consolidated groupedStock total
+    const targetRow = groupedStock.find(r => r.productCode.trim().toUpperCase() === targetCode);
+    if (targetRow) {
+      let sum = 0;
+      Object.values(targetRow.groups).forEach((g: { quantity: number }) => {
+        sum += g.quantity;
+      });
+      return sum;
+    }
+
+    // Fallback: sum directly applying correlation multiplier
     return stock
-      .filter(s => s.productCode.trim().toUpperCase() === targetCode)
-      .reduce((acc, s) => acc + s.quantity, 0);
-  }, [ordersModalData, stock]);
+      .filter(s => {
+        const codeUpper = (s.productCode || '').trim().toUpperCase();
+        const childRel = correlationMaps.childToParent.get(codeUpper);
+        const effective = childRel ? childRel.parentCode : codeUpper;
+        return effective === targetCode;
+      })
+      .reduce((acc, s) => {
+        const codeUpper = (s.productCode || '').trim().toUpperCase();
+        const childRel = correlationMaps.childToParent.get(codeUpper);
+        const mult = childRel ? childRel.multiplier : 1;
+        return acc + (s.quantity * mult);
+      }, 0);
+  }, [ordersModalData, groupedStock, stock, correlationMaps]);
 
   // Filtered and sorted orders inside the modal
   const filteredModalOrders = useMemo(() => {
@@ -1534,7 +1691,7 @@ export default function StockTable({
       {/* Main Stock Table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
-          {filteredStock.length === 0 ? (
+          {(viewMode === 'consolidated' ? groupedStock.length === 0 : filteredStock.length === 0) ? (
             <div className="text-center py-12 text-slate-400">
               <Package className="h-12 w-12 text-slate-300 mx-auto mb-3" />
               <p className="text-sm font-medium">Nenhum saldo de estoque encontrado.</p>
@@ -1579,7 +1736,23 @@ export default function StockTable({
                     <tr key={row.productCode} className="hover:bg-slate-50/50 transition-colors">
                       {/* Product Code */}
                       <td className="px-6 py-4 font-mono text-xs font-bold text-indigo-600 align-middle">
-                        {row.productCode}
+                        <div className="flex flex-col items-start gap-1">
+                          <span>{row.productCode}</span>
+                          {row.correlations && row.correlations.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-0.5">
+                              {row.correlations.map(c => (
+                                <span 
+                                  key={c.code}
+                                  title={`Item correlacionado consolidado neste saldo: ${c.code} (${c.multiplier}x)`}
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200"
+                                >
+                                  <Tag className="h-2.5 w-2.5" />
+                                  <span>{c.code} ({c.multiplier}x)</span>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </td>
 
                       {/* Product Name */}
@@ -1718,7 +1891,35 @@ export default function StockTable({
                     <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
                       {/* Product Code */}
                       <td className="px-6 py-4 font-mono text-xs font-bold text-indigo-600">
-                        {item.productCode}
+                        <div className="flex flex-col items-start gap-1">
+                          <span>{item.productCode}</span>
+                          {(() => {
+                            const codeUpper = (item.productCode || '').trim().toUpperCase();
+                            const childRel = correlationMaps.childToParent.get(codeUpper);
+                            if (childRel) {
+                              return (
+                                <span 
+                                  title={`Item correlacionado filho de ${childRel.parentCode} (multiplicador ${childRel.multiplier}x)`}
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-50 text-purple-700 border border-purple-200"
+                                >
+                                  🔗 Filho de {childRel.parentCode} ({childRel.multiplier}x)
+                                </span>
+                              );
+                            }
+                            const corrs = correlationMaps.parentToChildren.get(codeUpper);
+                            if (corrs && corrs.length > 0) {
+                              return (
+                                <span 
+                                  title={`Item pai com itens correlacionados consolidados`}
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200"
+                                >
+                                  🔗 Item Pai
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </div>
                       </td>
 
                       {/* Product Name */}
@@ -2797,10 +2998,20 @@ export default function StockTable({
 
                             {/* Lote */}
                             <td className="px-4 py-3">
-                              <span className="font-mono font-bold text-xs bg-slate-100 text-slate-800 px-2.5 py-1 rounded-md border border-slate-200 inline-flex items-center gap-1.5 shadow-2xs">
-                                <Tag className="h-3 w-3 text-indigo-500" />
-                                {item.lote && item.lote.trim() ? item.lote : <span className="text-slate-400 italic">Sem lote</span>}
-                              </span>
+                              <div className="flex flex-col items-start gap-1">
+                                <span className="font-mono font-bold text-xs bg-slate-100 text-slate-800 px-2.5 py-1 rounded-md border border-slate-200 inline-flex items-center gap-1.5 shadow-2xs">
+                                  <Tag className="h-3 w-3 text-indigo-500" />
+                                  {item.lote && item.lote.trim() ? item.lote : <span className="text-slate-400 italic">Sem lote</span>}
+                                </span>
+                                {(item as any)._originalCode && (
+                                  <span 
+                                    title={`Lote original do item correlacionado ${(item as any)._originalCode} (${(item as any)._originalQty} un × ${(item as any)._multiplier}x)`}
+                                    className="inline-flex items-center gap-1 text-[10px] text-indigo-700 font-medium bg-indigo-50/80 px-1.5 py-0.5 rounded border border-indigo-200"
+                                  >
+                                    Origem: {(item as any)._originalCode} ({(item as any)._originalQty} × {(item as any)._multiplier}x)
+                                  </span>
+                                )}
+                              </div>
                             </td>
 
                             {/* Depósito */}

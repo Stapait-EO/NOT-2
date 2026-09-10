@@ -24,7 +24,9 @@ import {
   Info,
   Play,
   Send,
-  Terminal
+  Terminal,
+  Zap,
+  Hand
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { UserAccount, WebhookConfig, FieldMapping, StockBalance, OrderHeader, Product } from '../types';
@@ -47,6 +49,8 @@ interface WebhookTableProps {
   orders?: OrderHeader[];
   products?: Product[];
   users?: UserAccount[];
+  isAutoSyncRunning?: boolean;
+  onTriggerAutoSync?: () => void;
 }
 
 export default function WebhookTable({
@@ -65,7 +69,9 @@ export default function WebhookTable({
   stock = [],
   orders = [],
   products = [],
-  users = []
+  users = [],
+  isAutoSyncRunning = false,
+  onTriggerAutoSync
 }: WebhookTableProps) {
   const [searchTerm, setSearchTerm] = useState('');
   
@@ -95,6 +101,7 @@ export default function WebhookTable({
   const [filterCondition, setFilterCondition] = useState('');
   const [isActive, setIsActive] = useState<boolean>(true);
   const [targetScreen, setTargetScreen] = useState('');
+  const [execution, setExecution] = useState<'Automática' | 'Manual'>('Manual');
   const [formError, setFormError] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -208,6 +215,7 @@ export default function WebhookTable({
         wh.tableName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         wh.url.toLowerCase().includes(searchTerm.toLowerCase()) ||
         wh.filterCondition.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (wh.execution && wh.execution.toLowerCase().includes(searchTerm.toLowerCase())) ||
         wh.seq.toString().includes(searchTerm)
       );
     });
@@ -232,6 +240,7 @@ export default function WebhookTable({
     setFilterCondition('');
     setIsActive(true);
     setTargetScreen('');
+    setExecution('Manual');
     setFormError('');
     setIsModalOpen(true);
   };
@@ -245,6 +254,7 @@ export default function WebhookTable({
     setFilterCondition(webhook.filterCondition);
     setIsActive(webhook.isActive !== undefined ? webhook.isActive : true);
     setTargetScreen(webhook.targetScreen || '');
+    setExecution(webhook.execution === 'Automática' ? 'Automática' : 'Manual');
     setFormError('');
     setIsModalOpen(true);
   };
@@ -300,7 +310,8 @@ export default function WebhookTable({
         secretKey: secretKey.trim(),
         filterCondition: filterCondition.trim(),
         isActive: isActive,
-        targetScreen: targetScreen
+        targetScreen: targetScreen,
+        execution: execution
       });
     } else {
       onAddWebhook({
@@ -310,7 +321,8 @@ export default function WebhookTable({
         secretKey: secretKey.trim(),
         filterCondition: filterCondition.trim(),
         isActive: isActive,
-        targetScreen: targetScreen
+        targetScreen: targetScreen,
+        execution: execution
       });
     }
 
@@ -978,21 +990,53 @@ export default function WebhookTable({
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
             </div>
 
-            {/* Create Button */}
-            {isAdmin ? (
-              <button
-                onClick={handleOpenAddModal}
-                className="flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-lg text-sm shadow-xs hover:shadow-indigo-500/10 transition-all cursor-pointer"
-              >
-                <Plus className="h-4 w-4" />
-                Configurar Webhook
-              </button>
-            ) : (
-              <div className="flex items-center gap-2 text-xs text-slate-500 bg-slate-100 px-3 py-2 rounded-lg border border-slate-200 select-none">
-                <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
-                <span>Apenas administradores podem configurar a API / Webhooks.</span>
-              </div>
-            )}
+            {/* Action Buttons */}
+            <div className="flex items-center gap-2.5 flex-wrap">
+              {onTriggerAutoSync && (
+                <button
+                  id="btn-manual-trigger-auto-sync"
+                  onClick={onTriggerAutoSync}
+                  disabled={isAutoSyncRunning}
+                  className={`flex items-center justify-center gap-1.5 px-3.5 py-2 text-sm font-semibold rounded-lg border transition-all cursor-pointer shadow-3xs ${
+                    isAutoSyncRunning
+                      ? 'bg-sky-50 text-sky-400 border-sky-200 cursor-not-allowed'
+                      : 'bg-white text-sky-700 hover:bg-sky-50 border-sky-300 hover:border-sky-400'
+                  }`}
+                  title="Executar imediatamente todas as APIs configuradas com execução Automática"
+                >
+                  <Zap className={`h-4 w-4 ${isAutoSyncRunning ? 'animate-spin text-sky-400' : 'text-sky-600 fill-sky-600/20'}`} />
+                  <span>{isAutoSyncRunning ? 'Sincronizando...' : 'Executar APIs Automáticas'}</span>
+                </button>
+              )}
+
+              {isAdmin ? (
+                <button
+                  onClick={handleOpenAddModal}
+                  className="flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-lg text-sm shadow-xs hover:shadow-indigo-500/10 transition-all cursor-pointer"
+                >
+                  <Plus className="h-4 w-4" />
+                  Configurar Webhook
+                </button>
+              ) : (
+                <div className="flex items-center gap-2 text-xs text-slate-500 bg-slate-100 px-3 py-2 rounded-lg border border-slate-200 select-none">
+                  <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
+                  <span>Apenas administradores podem configurar a API / Webhooks.</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Execution Mode Informational Banner */}
+          <div className="bg-sky-50/70 border border-sky-200 rounded-xl p-3.5 flex items-start gap-3 text-xs text-sky-900">
+            <Info className="h-4 w-4 text-sky-600 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="font-semibold text-sky-950">
+                Regra de Execução Automática no Login:
+              </p>
+              <p className="text-sky-800 leading-relaxed">
+                As APIs configuradas com o campo <strong className="text-sky-950 font-bold">"Execução: Automática"</strong> são disparadas em segundo plano assim que qualquer usuário autenticado entra no sistema. Os dados retornados são salvos no banco de dados e exibidos diretamente nas telas (Estoque, Pedidos, Vendas, Produtos), sem a necessidade de clicar no botão "Atualizar".
+              </p>
+            </div>
           </div>
 
           {/* Webhooks Table */}
@@ -1008,6 +1052,7 @@ export default function WebhookTable({
                     <th className="py-3 px-6">Chave Secreta (Token)</th>
                     <th className="py-3 px-6">Condição de Filtro</th>
                     <th className="py-3 px-6">Tela de Execução</th>
+                    <th className="py-3 px-6 text-center">Execução</th>
                     <th className="py-3 px-6 text-center">Status</th>
                     <th className="py-3 px-6">Data de Criação</th>
                     {isAdmin && <th className="py-3 px-6 text-right">Ações</th>}
@@ -1016,7 +1061,7 @@ export default function WebhookTable({
                 <tbody className="divide-y divide-slate-100 text-slate-700 text-sm">
                   {filteredWebhooks.length === 0 ? (
                     <tr>
-                      <td colSpan={isAdmin ? 9 : 8} className="py-12 text-center text-slate-400">
+                      <td colSpan={isAdmin ? 10 : 9} className="py-12 text-center text-slate-400">
                         <Globe className="h-10 w-10 mx-auto text-slate-300 mb-2" />
                         <p className="font-semibold text-slate-500">Nenhum webhook configurado</p>
                         <p className="text-xs mt-1">Clique em "Configurar Webhook" para começar.</p>
@@ -1112,6 +1157,21 @@ export default function WebhookTable({
                             </span>
                           ) : (
                             <span className="text-slate-400 italic text-xs">Apenas Gatilhos</span>
+                          )}
+                        </td>
+
+                        {/* Execução */}
+                        <td className="py-4 px-6 text-center">
+                          {wh.execution === 'Automática' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-sky-700 bg-sky-50 border border-sky-200 shadow-3xs" title="Execução Automática">
+                              <Zap className="h-3 w-3 text-sky-500" />
+                              Automática
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 shadow-3xs" title="Execução Manual">
+                              <Hand className="h-3 w-3 text-amber-500" />
+                              Manual
+                            </span>
                           )}
                         </td>
 
@@ -1791,7 +1851,25 @@ export default function WebhookTable({
                   <option value="users">Usuários</option>
                 </select>
                 <p className="text-[10px] text-slate-400 mt-1">
-                  Associe este Webhook a uma tela específica para que ele possa ser executado manualmente através do botão "Atualizar".
+                  Associe este Webhook a uma tela específica para que ele possa ser executado através do botão "Atualizar".
+                </p>
+              </div>
+
+              {/* Execução */}
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                  Execução *
+                </label>
+                <select
+                  value={execution}
+                  onChange={(e) => setExecution(e.target.value as 'Automática' | 'Manual')}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-slate-800 bg-white focus:outline-none focus:border-indigo-500 transition-all cursor-pointer"
+                >
+                  <option value="Automática">Automática</option>
+                  <option value="Manual">Manual</option>
+                </select>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Escolha se este Webhook terá execução Automática ou Manual.
                 </p>
               </div>
 

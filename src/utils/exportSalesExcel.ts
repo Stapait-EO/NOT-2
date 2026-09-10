@@ -201,8 +201,12 @@ export async function exportSalesToExcel(params: ExportSalesExcelParams): Promis
 
   // Linhas de dados
   skus.forEach((sku, rowIndex) => {
-    const pName = products.find(p => p.code.toLowerCase() === sku.toLowerCase())?.name || 
-                  stock.find(s => (s.productCode || s.codigo || '').toLowerCase() === sku.toLowerCase())?.productName || '';
+    const pName = products.find(p => 
+      p.code.toLowerCase() === sku.toLowerCase() ||
+      p.codigo?.toLowerCase() === sku.toLowerCase() ||
+      (p.pr_cod !== undefined && String(p.pr_cod).toLowerCase() === sku.toLowerCase())
+    )?.name || 
+    stock.find(s => (s.productCode || s.codigo || '').toLowerCase() === sku.toLowerCase())?.productName || '';
 
     const monthData = salesBySku.get(sku) || {};
     const rowPeriodTotal = viewPeriod === 'last12closed'

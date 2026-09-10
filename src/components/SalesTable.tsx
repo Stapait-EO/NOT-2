@@ -235,6 +235,46 @@ export const SalesTable: React.FC<SalesTableProps> = ({
     return wh.groupName?.trim() || "Outros";
   }, [warehouses]);
 
+  // Product correlations lookup:
+  // Maps child product codes to their parent product code and multiplier,
+  // and parent product codes to their list of children with multipliers.
+  const correlationMaps = useMemo(() => {
+    const childToParent = new Map<string, { parentCode: string; multiplier: number }>();
+    const parentToChildren = new Map<string, { code: string; multiplier: number; description?: string }[]>();
+
+    products.forEach(p => {
+      const parentKey = (p.code || '').trim().toUpperCase();
+      if (!parentKey) return;
+
+      const corrs: { code: string; multiplier: number; description?: string }[] = [];
+      if (Array.isArray(p.correlations)) {
+        p.correlations.forEach(c => {
+          const cCode = (c.code || '').trim().toUpperCase();
+          const mult = Number(c.multiplier) || 1;
+          if (cCode && cCode !== parentKey && mult > 0) {
+            corrs.push({ code: cCode, multiplier: mult, description: c.description });
+          }
+        });
+      }
+      if (p.correlationCode) {
+        const cCode = p.correlationCode.trim().toUpperCase();
+        const mult = Number(p.correlationMultiplier) || 1;
+        if (cCode && cCode !== parentKey && mult > 0 && !corrs.some(c => c.code === cCode)) {
+          corrs.push({ code: cCode, multiplier: mult });
+        }
+      }
+
+      if (corrs.length > 0) {
+        parentToChildren.set(parentKey, corrs);
+        corrs.forEach(c => {
+          childToParent.set(c.code, { parentCode: parentKey, multiplier: c.multiplier });
+        });
+      }
+    });
+
+    return { childToParent, parentToChildren };
+  }, [products]);
+
   // Todos os meses únicos presentes na base de vendas (ordenados cronologicamente)
   const allSalesMonths = useMemo<MonthColumn[]>(() => {
     const map = new Map<string, { month: number; year: number }>();
@@ -303,24 +343,37 @@ export const SalesTable: React.FC<SalesTableProps> = ({
     return { last3, mid3, prior6 };
   }, [target12ClosedMonths]);
 
-  // Group sales by SKU
+  // Group sales by SKU, consolidating correlated child items into their parent item
   const salesBySku = useMemo(() => {
     const skuMap = new Map<string, { [monthKey: string]: number }>();
 
     sales.forEach(s => {
-      const skuClean = s.sku.trim();
-      if (!skuMap.has(skuClean)) {
-        skuMap.set(skuClean, {});
+      const rawSku = (s.sku || '').trim();
+      if (!rawSku) return;
+      const skuUpper = rawSku.toUpperCase();
+
+      // Verifica se o SKU vendido é um item correlacionado (filho)
+      const childRel = correlationMaps.childToParent.get(skuUpper);
+      const effectiveParentCode = childRel ? childRel.parentCode : rawSku;
+      const multiplier = childRel ? childRel.multiplier : 1;
+
+      // Identifica o código canônico do produto pai
+      const canonicalProd = products.find(p => p.code.trim().toUpperCase() === effectiveParentCode.toUpperCase());
+      const targetSku = canonicalProd ? canonicalProd.code : effectiveParentCode;
+
+      if (!skuMap.has(targetSku)) {
+        skuMap.set(targetSku, {});
       }
-      const record = skuMap.get(skuClean)!;
+      const record = skuMap.get(targetSku)!;
       const key = `${s.month}/${s.year}`;
-      record[key] = (record[key] || 0) + s.quantity;
+      const convertedQty = (Number(s.quantity) || 0) * multiplier;
+      record[key] = (record[key] || 0) + convertedQty;
     });
 
     return skuMap;
-  }, [sales]);
+  }, [sales, correlationMaps, products]);
 
-  // Conjunto de SKUs que tiveram faturamento no período ativo
+  // Conjunto de SKUs que tiveram faturamento no período ativo (apenas itens pais consolidados)
   const skusWithSalesSet = useMemo(() => {
     const set = new Set<string>();
     if (viewPeriod === 'all') {
@@ -330,16 +383,25 @@ export const SalesTable: React.FC<SalesTableProps> = ({
       });
     } else {
       sales.forEach(s => {
+        const rawSku = (s.sku || '').trim();
+        if (!rawSku) return;
+        const skuUpper = rawSku.toUpperCase();
+        const childRel = correlationMaps.childToParent.get(skuUpper);
+        const effectiveParentCode = childRel ? childRel.parentCode : rawSku;
+        const canonicalProd = products.find(p => p.code.trim().toUpperCase() === effectiveParentCode.toUpperCase());
+        const targetSku = canonicalProd ? canonicalProd.code : effectiveParentCode;
+
         const key = `${s.month}/${s.year}`;
-        if (last12MonthKeys.has(key) && Number(s.quantity) > 0 && s.sku.trim()) {
-          set.add(s.sku.trim());
+        if (last12MonthKeys.has(key) && Number(s.quantity) > 0 && targetSku) {
+          set.add(targetSku);
         }
       });
     }
     return set;
-  }, [salesBySku, viewPeriod, last12MonthKeys, sales]);
+  }, [salesBySku, viewPeriod, last12MonthKeys, sales, correlationMaps, products]);
 
   // SKUs presentes na tabela de Saldo de Estoque que NÃO tiveram faturamento no período
+  // Apenas itens pais consolidados
   const stockOnlySkusSet = useMemo(() => {
     const set = new Set<string>();
     const salesLower = new Set(Array.from(skusWithSalesSet).map((s: string) => s.toLowerCase()));
@@ -351,14 +413,22 @@ export const SalesTable: React.FC<SalesTableProps> = ({
         return;
       }
 
-      const itemSku = (item.productCode || item.codigo || '').trim();
-      if (itemSku && !salesLower.has(itemSku.toLowerCase())) {
-        set.add(itemSku);
+      const rawSku = (item.productCode || item.codigo || '').trim();
+      if (!rawSku) return;
+      const skuUpper = rawSku.toUpperCase();
+
+      const childRel = correlationMaps.childToParent.get(skuUpper);
+      const effectiveParentCode = childRel ? childRel.parentCode : rawSku;
+      const canonicalProd = products.find(p => p.code.trim().toUpperCase() === effectiveParentCode.toUpperCase());
+      const targetSku = canonicalProd ? canonicalProd.code : effectiveParentCode;
+
+      if (targetSku && !salesLower.has(targetSku.toLowerCase())) {
+        set.add(targetSku);
       }
     });
 
     return set;
-  }, [stock, skusWithSalesSet, stockGroupFilter, getWarehouseGroup]);
+  }, [stock, skusWithSalesSet, stockGroupFilter, correlationMaps, products, getWarehouseGroup]);
 
   // Lista de todos os SKUs consolidados (Vendas + Saldo de Estoque automático)
   const allSkus = useMemo(() => {
@@ -369,20 +439,37 @@ export const SalesTable: React.FC<SalesTableProps> = ({
     return Array.from(combined).sort((a: string, b: string) => a.localeCompare(b));
   }, [skusWithSalesSet, stockOnlySkusSet, includeStockWithoutSales]);
 
-  // Filtered SKUs based on search (pesquisa por código ou nome em produtos e no saldo de estoque)
+  // Filtered SKUs based on search (pesquisa por código do pai, código de item filho correlacionado ou nome)
   const filteredSkus = useMemo(() => {
     if (!searchTerm.trim()) return allSkus;
     const term = searchTerm.trim().toLowerCase();
 
     return allSkus.filter((sku: string) => {
-      if (sku.toLowerCase().includes(term)) return true;
-      const matchedProd = products.find(p => p.code.toLowerCase() === sku.toLowerCase());
+      const skuLower = sku.toLowerCase();
+      if (skuLower.includes(term)) return true;
+
+      // Verifica se a busca corresponde a algum item filho correlacionado
+      const children = correlationMaps.parentToChildren.get(sku.trim().toUpperCase()) || [];
+      if (children.some(c => 
+        c.code.toLowerCase().includes(term) || 
+        (c.description && c.description.toLowerCase().includes(term))
+      )) {
+        return true;
+      }
+
+      const matchedProd = products.find(p => 
+        p.code.toLowerCase() === skuLower ||
+        p.codigo?.toLowerCase() === skuLower ||
+        (p.pr_cod !== undefined && String(p.pr_cod).toLowerCase() === skuLower)
+      );
       if (matchedProd && matchedProd.name.toLowerCase().includes(term)) return true;
-      const matchedStock = stock.find(stk => (stk.productCode || stk.codigo || '').toLowerCase() === sku.toLowerCase());
+
+      const matchedStock = stock.find(stk => (stk.productCode || stk.codigo || '').toLowerCase() === skuLower);
       if (matchedStock && matchedStock.productName?.toLowerCase().includes(term)) return true;
+
       return false;
     }).sort((a: string, b: string) => a.localeCompare(b));
-  }, [allSkus, searchTerm, products, stock]);
+  }, [allSkus, searchTerm, products, stock, correlationMaps]);
 
   // Calculate totals per SKU
   const skuTotals = useMemo(() => {
@@ -483,6 +570,7 @@ export const SalesTable: React.FC<SalesTableProps> = ({
   }, [warehouses, stock, getWarehouseGroup]);
 
   // Mapa com o saldo físico e valor financeiro de estoque por SKU considerando o filtro de grupo ativo
+  // Consolida o estoque de itens filhos no item pai correspondente com a conversão de multiplicador
   const skuStockData = useMemo(() => {
     const map: { [sku: string]: { quantity: number; value: number } } = {};
 
@@ -495,11 +583,25 @@ export const SalesTable: React.FC<SalesTableProps> = ({
         return;
       }
 
-      const itemSku = (item.productCode || '').trim();
-      if (!itemSku) return;
+      const rawSku = (item.productCode || item.codigo || '').trim();
+      if (!rawSku) return;
+      const skuUpper = rawSku.toUpperCase();
 
-      // Identifica preço unitário para cálculo do valor do estoque
-      const prod = products.find(p => p.code.trim().toLowerCase() === itemSku.toLowerCase());
+      // Verifica se é item correlacionado filho
+      const childRel = correlationMaps.childToParent.get(skuUpper);
+      const effectiveParentCode = childRel ? childRel.parentCode : rawSku;
+      const multiplier = childRel ? childRel.multiplier : 1;
+
+      // Identifica o código canônico do produto pai
+      const canonicalProd = products.find(p => p.code.trim().toUpperCase() === effectiveParentCode.toUpperCase());
+      const targetSku = canonicalProd ? canonicalProd.code : effectiveParentCode;
+
+      // Identifica preço unitário para cálculo do valor do estoque do item atual
+      const prod = products.find(p => 
+        p.code.trim().toLowerCase() === rawSku.toLowerCase() ||
+        p.codigo?.trim().toLowerCase() === rawSku.toLowerCase() ||
+        (p.pr_cod !== undefined && String(p.pr_cod).toLowerCase() === rawSku.toLowerCase())
+      );
       const unitPrice = (item.pr_preco !== undefined && item.pr_preco > 0)
         ? item.pr_preco
         : ((prod as any)?.pr_preco !== undefined && (prod as any)?.pr_preco > 0)
@@ -513,16 +615,19 @@ export const SalesTable: React.FC<SalesTableProps> = ({
         itemTotalVal = item.vlrest;
       }
 
-      if (!map[itemSku]) {
-        map[itemSku] = { quantity: 0, value: 0 };
+      // Quantidade convertida com o multiplicador
+      const convertedQty = item.quantity * multiplier;
+
+      if (!map[targetSku]) {
+        map[targetSku] = { quantity: 0, value: 0 };
       }
 
-      map[itemSku].quantity += item.quantity;
-      map[itemSku].value += itemTotalVal;
+      map[targetSku].quantity += convertedQty;
+      map[targetSku].value += itemTotalVal;
     });
 
     return map;
-  }, [stock, stockGroupFilter, products, getWarehouseGroup]);
+  }, [stock, stockGroupFilter, products, correlationMaps, getWarehouseGroup]);
 
   // Busca do saldo e valor de estoque por SKU com suporte insensível a maiúsculas/minúsculas
   const getSkuStock = React.useCallback((sku: string) => {
@@ -2230,8 +2335,31 @@ export const SalesTable: React.FC<SalesTableProps> = ({
                             </span>
                           </div>
                           {(() => {
-                            const pName = products.find(p => p.code.toLowerCase() === sku.toLowerCase())?.name || 
-                                          stock.find(s => (s.productCode || s.codigo || '').toLowerCase() === sku.toLowerCase())?.productName;
+                            const corrs = correlationMaps.parentToChildren.get(sku.trim().toUpperCase());
+                            if (corrs && corrs.length > 0) {
+                              return (
+                                <div className="flex flex-wrap gap-1 mt-0.5">
+                                  {corrs.map(c => (
+                                    <span 
+                                      key={c.code}
+                                      title={`Item correlacionado consolidado no consumo e estoque: ${c.code} (${c.multiplier}x)`}
+                                      className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200"
+                                    >
+                                      <span>🔗 {c.code} ({c.multiplier}x)</span>
+                                    </span>
+                                  ))}
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
+                          {(() => {
+                            const pName = products.find(p => 
+                              p.code.toLowerCase() === sku.toLowerCase() ||
+                              p.codigo?.toLowerCase() === sku.toLowerCase() ||
+                              (p.pr_cod !== undefined && String(p.pr_cod).toLowerCase() === sku.toLowerCase())
+                            )?.name || 
+                            stock.find(s => (s.productCode || s.codigo || '').toLowerCase() === sku.toLowerCase())?.productName;
                             return pName ? (
                               <span className="text-[10px] text-slate-400 truncate max-w-[170px]" title={pName}>
                                 {pName}
@@ -2413,7 +2541,7 @@ export const SalesTable: React.FC<SalesTableProps> = ({
             </tbody>
 
             {/* Footer Total Row: Executive Dark Analytics Summary */}
-            {filteredSkus.length > 0 && (
+            {sortedFilteredSkus.length > 0 && (
               <tfoot className="sticky bottom-0 z-20 bg-slate-900 text-white font-mono font-bold text-[12px] shadow-[0_-4px_12px_rgba(0,0,0,0.2)] divide-x divide-slate-800">
                 <tr>
                   <td className="px-3 py-2.5 text-left font-black tracking-wider text-[11px] sticky left-0 z-30 bg-slate-900 text-amber-400 border-r border-slate-800 shadow-[2px_0_5px_rgba(0,0,0,0.2)]">

@@ -15,9 +15,14 @@ import {
   RefreshCw,
   FileText,
   Clipboard,
-  Download
+  Download,
+  Link2,
+  Boxes,
+  ArrowRight,
+  Package,
+  Info
 } from 'lucide-react';
-import { Product, UserRole, WebhookConfig, FieldMapping } from '../types';
+import { Product, UserRole, WebhookConfig, FieldMapping, CorrelatedItem } from '../types';
 import { executeProxyWebhook } from '../utils/proxyWebhook';
 
 interface ProductsTableProps {
@@ -69,6 +74,16 @@ export default function ProductsTable({
   const [lote, setLote] = useState('');
   const [avgQty1x, setAvgQty1x] = useState('');
   const [avgQty3x, setAvgQty3x] = useState('');
+
+  // Modal Tab State: 'details' | 'correlations'
+  const [activeModalTab, setActiveModalTab] = useState<'details' | 'correlations'>('details');
+
+  // Correlation Form Fields
+  const [correlationCode, setCorrelationCode] = useState('');
+  const [correlationMultiplier, setCorrelationMultiplier] = useState('');
+  const [correlationDescription, setCorrelationDescription] = useState('');
+  const [correlatedItemsList, setCorrelatedItemsList] = useState<CorrelatedItem[]>([]);
+  const [correlationFormError, setCorrelationFormError] = useState('');
   
   // Error / Warning handling
   const [formError, setFormError] = useState('');
@@ -438,30 +453,58 @@ export default function ProductsTable({
     return ['Todos', ...Array.from(list)];
   }, [products]);
 
-  // Filter products based on search term & category
+  // Filter products based on search term & category (including correlation codes)
   const filteredProducts = useMemo(() => {
     const term = searchTerm.toLowerCase().trim();
+    const seenCodes = new Set<string>();
+
     return products.filter(p => {
+      const normCode = (p.code || '').trim().toUpperCase();
+      if (normCode && seenCodes.has(normCode)) {
+        return false;
+      }
+
       const matchesSearch = 
         !term ||
         p.code.toLowerCase().includes(term) ||
         p.name.toLowerCase().includes(term) ||
         (p.category && p.category.toLowerCase().includes(term)) ||
         (p.codigo && p.codigo.toLowerCase().includes(term)) ||
-        (p.pr_cod !== undefined && String(p.pr_cod).toLowerCase().includes(term));
+        (p.pr_cod !== undefined && String(p.pr_cod).toLowerCase().includes(term)) ||
+        (p.correlationCode && p.correlationCode.toLowerCase().includes(term)) ||
+        (p.correlations && p.correlations.some(c => 
+          c.code.toLowerCase().includes(term) || 
+          (c.description && c.description.toLowerCase().includes(term))
+        ));
         
       const matchesCategory = 
         selectedCategoryFilter === 'Todos' || 
         p.category === selectedCategoryFilter;
         
-      return matchesSearch && matchesCategory;
+      if (matchesSearch && matchesCategory) {
+        if (normCode) seenCodes.add(normCode);
+        return true;
+      }
+      return false;
     });
   }, [products, searchTerm, selectedCategoryFilter]);
+
+  // Live lookup for matched correlation product in catalog
+  const matchedCorrelationProduct = useMemo(() => {
+    if (!correlationCode.trim()) return null;
+    const target = correlationCode.trim().toLowerCase();
+    return products.find(p => 
+      p.code.toLowerCase() === target ||
+      p.codigo?.toLowerCase() === target ||
+      (p.pr_cod !== undefined && String(p.pr_cod).toLowerCase() === target)
+    );
+  }, [correlationCode, products]);
 
   // Handle open create modal
   const handleOpenCreateModal = () => {
     if (!canManageProducts) return;
     setEditingProduct(null);
+    setActiveModalTab('details');
     setProductCode('');
     setProductName('');
     setProductCategory('');
@@ -470,6 +513,11 @@ export default function ProductsTable({
     setLote('');
     setAvgQty1x('');
     setAvgQty3x('');
+    setCorrelationCode('');
+    setCorrelationMultiplier('');
+    setCorrelationDescription('');
+    setCorrelatedItemsList([]);
+    setCorrelationFormError('');
     setFormError('');
     setIsModalOpen(true);
   };
@@ -478,6 +526,7 @@ export default function ProductsTable({
   const handleOpenEditModal = (prod: Product) => {
     if (!canManageProducts) return;
     setEditingProduct(prod);
+    setActiveModalTab('details');
     setProductCode(prod.code);
     setProductName(prod.name);
     setProductCategory(prod.category || '');
@@ -486,8 +535,92 @@ export default function ProductsTable({
     setLote(prod.lote || '');
     setAvgQty1x(prod.avgQty1x !== undefined ? String(prod.avgQty1x) : '');
     setAvgQty3x(prod.avgQty3x !== undefined ? String(prod.avgQty3x) : '');
+
+    // Setup correlation list & primary fields
+    const existingCorrelations: CorrelatedItem[] = prod.correlations && prod.correlations.length > 0
+      ? [...prod.correlations]
+      : prod.correlationCode
+        ? [{
+            id: `corr-${Date.now()}`,
+            code: prod.correlationCode,
+            multiplier: prod.correlationMultiplier || 1,
+            description: ''
+          }]
+        : [];
+
+    setCorrelatedItemsList(existingCorrelations);
+    if (existingCorrelations.length > 0) {
+      setCorrelationCode(existingCorrelations[0].code);
+      setCorrelationMultiplier(String(existingCorrelations[0].multiplier));
+      setCorrelationDescription(existingCorrelations[0].description || '');
+    } else {
+      setCorrelationCode(prod.correlationCode || '');
+      setCorrelationMultiplier(prod.correlationMultiplier !== undefined ? String(prod.correlationMultiplier) : '');
+      setCorrelationDescription('');
+    }
+
+    setCorrelationFormError('');
     setFormError('');
     setIsModalOpen(true);
+  };
+
+  // Add correlation to list
+  const handleAddCorrelationToList = () => {
+    setCorrelationFormError('');
+    const code = correlationCode.trim().toUpperCase();
+    if (!code) {
+      setCorrelationFormError('Informe o código do item correlacionado (SKU).');
+      return;
+    }
+
+    if (code === productCode.trim().toUpperCase()) {
+      setCorrelationFormError('O código correlacionado não pode ser o mesmo código do produto principal.');
+      return;
+    }
+
+    const mult = parseFloat(correlationMultiplier.trim());
+    if (isNaN(mult) || mult <= 0) {
+      setCorrelationFormError('O múltiplo deve ser um número maior que zero (ex: 10).');
+      return;
+    }
+
+    const existingIndex = correlatedItemsList.findIndex(c => c.code.toUpperCase() === code);
+    if (existingIndex >= 0) {
+      const updated = [...correlatedItemsList];
+      updated[existingIndex] = {
+        ...updated[existingIndex],
+        multiplier: mult,
+        description: correlationDescription.trim() || undefined
+      };
+      setCorrelatedItemsList(updated);
+    } else {
+      setCorrelatedItemsList([
+        ...correlatedItemsList,
+        {
+          id: `corr-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          code,
+          multiplier: mult,
+          description: correlationDescription.trim() || undefined
+        }
+      ]);
+    }
+  };
+
+  // Remove correlation from list
+  const handleRemoveCorrelation = (codeToRemove: string) => {
+    const updated = correlatedItemsList.filter(c => c.code.toUpperCase() !== codeToRemove.toUpperCase());
+    setCorrelatedItemsList(updated);
+    if (correlationCode.trim().toUpperCase() === codeToRemove.toUpperCase()) {
+      if (updated.length > 0) {
+        setCorrelationCode(updated[0].code);
+        setCorrelationMultiplier(String(updated[0].multiplier));
+        setCorrelationDescription(updated[0].description || '');
+      } else {
+        setCorrelationCode('');
+        setCorrelationMultiplier('');
+        setCorrelationDescription('');
+      }
+    }
   };
 
   // Handle open delete modal
@@ -516,6 +649,7 @@ export default function ProductsTable({
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     setFormError('');
+    setCorrelationFormError('');
 
     const trimmedCode = productCode.trim();
     const trimmedName = productName.trim();
@@ -523,10 +657,12 @@ export default function ProductsTable({
 
     if (!trimmedCode) {
       setFormError('O código do produto é obrigatório.');
+      setActiveModalTab('details');
       return;
     }
     if (!trimmedName) {
       setFormError('O nome do produto é obrigatório.');
+      setActiveModalTab('details');
       return;
     }
 
@@ -534,6 +670,7 @@ export default function ProductsTable({
     if (prCodParsed !== undefined) {
       if (isNaN(prCodParsed) || prCodParsed < 0 || prCodParsed > 99999) {
         setFormError('O Código Interno (Pr_cod) deve ser um número válido de até 5 dígitos (0 a 99999).');
+        setActiveModalTab('details');
         return;
       }
     }
@@ -541,25 +678,57 @@ export default function ProductsTable({
     const codigoStructuredParsed = codigoStructured.trim() ? codigoStructured.trim() : undefined;
     if (codigoStructuredParsed && codigoStructuredParsed.length > 10) {
       setFormError('O Código Estruturado deve ter no máximo 10 caracteres.');
+      setActiveModalTab('details');
       return;
     }
 
     const loteParsed = lote.trim() ? lote.trim() : undefined;
     if (loteParsed && loteParsed.length > 10) {
       setFormError('O Lote do Produto deve ter no máximo 10 caracteres.');
+      setActiveModalTab('details');
       return;
     }
 
     const avgQty1xParsed = avgQty1x.trim() ? parseInt(avgQty1x.trim(), 10) : undefined;
     if (avgQty1xParsed !== undefined && (isNaN(avgQty1xParsed) || !Number.isInteger(avgQty1xParsed))) {
       setFormError('A Qtd Média 1x deve ser um número inteiro válido.');
+      setActiveModalTab('details');
       return;
     }
 
     const avgQty3xParsed = avgQty3x.trim() ? parseInt(avgQty3x.trim(), 10) : undefined;
     if (avgQty3xParsed !== undefined && (isNaN(avgQty3xParsed) || !Number.isInteger(avgQty3xParsed))) {
       setFormError('A Qtd Média 3x deve ser um número inteiro válido.');
+      setActiveModalTab('details');
       return;
+    }
+
+    // Process correlations: merge current inputs if user didn't explicitly click "Adicionar"
+    let finalCorrelations = [...correlatedItemsList];
+    const currCorrCode = correlationCode.trim().toUpperCase();
+    const currMult = parseFloat(correlationMultiplier.trim());
+
+    if (currCorrCode && !isNaN(currMult) && currMult > 0) {
+      if (currCorrCode === trimmedCode.toUpperCase()) {
+        setFormError('O código correlacionado não pode ser igual ao código principal do produto.');
+        setActiveModalTab('correlations');
+        return;
+      }
+      const existingIdx = finalCorrelations.findIndex(c => c.code.toUpperCase() === currCorrCode);
+      if (existingIdx >= 0) {
+        finalCorrelations[existingIdx] = {
+          ...finalCorrelations[existingIdx],
+          multiplier: currMult,
+          description: correlationDescription.trim() || finalCorrelations[existingIdx].description
+        };
+      } else {
+        finalCorrelations.push({
+          id: `corr-${Date.now()}`,
+          code: currCorrCode,
+          multiplier: currMult,
+          description: correlationDescription.trim() || undefined
+        });
+      }
     }
 
     const updatedProductData: Product = {
@@ -570,7 +739,10 @@ export default function ProductsTable({
       codigo: codigoStructuredParsed,
       lote: loteParsed,
       avgQty1x: avgQty1xParsed,
-      avgQty3x: avgQty3xParsed
+      avgQty3x: avgQty3xParsed,
+      correlationCode: finalCorrelations.length > 0 ? finalCorrelations[0].code : undefined,
+      correlationMultiplier: finalCorrelations.length > 0 ? finalCorrelations[0].multiplier : undefined,
+      correlations: finalCorrelations.length > 0 ? finalCorrelations : undefined
     };
 
     // If creating new, check for duplicate code
@@ -578,6 +750,7 @@ export default function ProductsTable({
       const codeExists = products.some(p => p.code.toLowerCase() === trimmedCode.toLowerCase());
       if (codeExists) {
         setFormError(`Já existe um produto cadastrado com o código "${trimmedCode}".`);
+        setActiveModalTab('details');
         return;
       }
 
@@ -768,9 +941,20 @@ export default function ProductsTable({
                     
                     {/* Code */}
                     <td className="py-4 px-6 font-mono text-xs font-bold text-indigo-950">
-                      <span className="bg-indigo-50/50 text-indigo-700 border border-indigo-100 px-2.5 py-1 rounded-md">
-                        {prod.code}
-                      </span>
+                      <div className="flex flex-col items-start gap-1">
+                        <span className="bg-indigo-50/50 text-indigo-700 border border-indigo-100 px-2.5 py-1 rounded-md">
+                          {prod.code}
+                        </span>
+                        {prod.correlationCode && (
+                          <span 
+                            className="inline-flex items-center gap-1 text-[10px] bg-sky-50 text-sky-700 border border-sky-200/80 px-1.5 py-0.5 rounded font-mono font-medium"
+                            title={`Correlacionado com ${prod.correlationCode} (Múltiplo: ${prod.correlationMultiplier || 1}x)`}
+                          >
+                            <Link2 className="h-2.5 w-2.5 text-sky-600" />
+                            <span>{prod.correlationCode} ({prod.correlationMultiplier || 1}x)</span>
+                          </span>
+                        )}
+                      </div>
                     </td>
 
                     {/* Name */}
@@ -833,183 +1017,507 @@ export default function ProductsTable({
       {/* CREATE / EDIT PRODUCT MODAL */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-100 w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             
             {/* Modal Header */}
-            <div className="border-b border-slate-100 px-6 py-4 bg-slate-50 flex items-center justify-between">
-              <h3 className="font-bold text-slate-800 text-base">
-                {editingProduct ? '📝 Editar Cadastro de Produto' : '📦 Cadastrar Novo Produto'}
-              </h3>
+            <div className="border-b border-slate-100 px-6 py-4 bg-slate-50/80 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-xl">
+                  <Package className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-base">
+                    {editingProduct ? 'Editar Cadastro de Produto' : 'Cadastrar Novo Produto'}
+                  </h3>
+                  {editingProduct ? (
+                    <p className="text-xs text-slate-500 font-mono mt-0.5">
+                      SKU: <span className="font-bold text-indigo-700">{editingProduct.code}</span> — {editingProduct.name}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Cadastre os dados principais e as regras de correlação do produto.
+                    </p>
+                  )}
+                </div>
+              </div>
               <button 
+                type="button"
                 onClick={() => setIsModalOpen(false)}
-                className="p-1 hover:bg-slate-200 text-slate-400 hover:text-slate-600 rounded-md transition-all cursor-pointer"
+                className="p-1.5 hover:bg-slate-200 text-slate-400 hover:text-slate-600 rounded-lg transition-all cursor-pointer"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            {/* Modal Form */}
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              
-              {formError && (
-                <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg flex items-start gap-2">
-                  <AlertCircle className="h-4.5 w-4.5 text-red-500 shrink-0 mt-0.5" />
-                  <span>{formError}</span>
-                </div>
-              )}
+            {/* Modal Tab Navigation */}
+            <div className="flex border-b border-slate-200 bg-slate-50/50 px-6 pt-1 gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setActiveModalTab('details')}
+                className={`flex items-center gap-2 py-3 px-4 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+                  activeModalTab === 'details'
+                    ? 'border-indigo-600 text-indigo-600 bg-white rounded-t-lg border-t border-x border-t-slate-200 border-x-slate-200 -mb-px'
+                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                }`}
+              >
+                <Layers className="h-4 w-4" />
+                <span>Dados Principais</span>
+              </button>
 
-              {/* Product Code */}
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
-                  Código do Produto (SKU / Código Único) *
-                </label>
-                <input
-                  type="text"
-                  placeholder="Ex: PROD-001"
-                  value={productCode}
-                  onChange={(e) => setProductCode(e.target.value)}
-                  disabled={!!editingProduct}
-                  className={`w-full px-3 py-2 border rounded-lg text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none transition-all ${
-                    editingProduct 
-                      ? 'bg-slate-100 text-slate-500 border-slate-200 cursor-not-allowed font-mono' 
-                      : 'bg-white border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono'
-                  }`}
-                  required
-                />
-                {editingProduct && (
-                  <p className="text-[10px] text-slate-400 mt-1 italic">
-                    O código do produto não pode ser alterado após o cadastro.
-                  </p>
+              <button
+                type="button"
+                onClick={() => setActiveModalTab('correlations')}
+                className={`flex items-center gap-2 py-3 px-4 text-xs font-bold border-b-2 transition-all cursor-pointer relative ${
+                  activeModalTab === 'correlations'
+                    ? 'border-indigo-600 text-indigo-600 bg-white rounded-t-lg border-t border-x border-t-slate-200 border-x-slate-200 -mb-px'
+                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                }`}
+              >
+                <Link2 className="h-4 w-4" />
+                <span>Itens Correlacionados</span>
+                {correlatedItemsList.length > 0 && (
+                  <span className="ml-1 px-1.5 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-[10px] font-mono font-bold">
+                    {correlatedItemsList.length}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-5 flex flex-col justify-between">
+              
+              <div className="space-y-4">
+                {formError && (
+                  <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-start gap-2 animate-in fade-in">
+                    <AlertCircle className="h-4.5 w-4.5 text-red-500 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5">
+                      <p className="font-bold">Atenção no formulário:</p>
+                      <p>{formError}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 1: DADOS PRINCIPAIS */}
+                {activeModalTab === 'details' && (
+                  <div className="space-y-4 animate-in fade-in duration-150">
+                    {/* Product Code */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">
+                        Código do Produto (SKU / Código Único) *
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Ex: PROD-001 ou B501-WHITE"
+                        value={productCode}
+                        onChange={(e) => setProductCode(e.target.value)}
+                        disabled={!!editingProduct}
+                        className={`w-full px-3.5 py-2.5 border rounded-xl text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none transition-all ${
+                          editingProduct 
+                            ? 'bg-slate-100 text-slate-500 border-slate-200 cursor-not-allowed font-mono font-semibold' 
+                            : 'bg-white border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono'
+                        }`}
+                        required
+                      />
+                      {editingProduct && (
+                        <p className="text-[11px] text-slate-400 mt-1 italic">
+                          O código do produto não pode ser alterado após o cadastro.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Product Description / Name */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">
+                        Nome do Produto / Descrição *
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Ex: Teclado Mecânico RGB Wireless"
+                        value={productName}
+                        onChange={(e) => setProductName(e.target.value)}
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-semibold"
+                        required
+                      />
+                    </div>
+
+                    {/* Grid: pr_cod & codigoStructured */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">
+                          Código Interno (pr_cod)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="99999"
+                          placeholder="Ex: 10001"
+                          value={prCod}
+                          onChange={(e) => setPrCod(e.target.value)}
+                          className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">
+                          Cód. Estruturado (codigo)
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={10}
+                          placeholder="Ex: PROD000001"
+                          value={codigoStructured}
+                          onChange={(e) => setCodigoStructured(e.target.value)}
+                          className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Grid: lote & category */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">
+                          Lote do Produto
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={10}
+                          placeholder="Ex: LOTE000001"
+                          value={lote}
+                          onChange={(e) => setLote(e.target.value)}
+                          className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">
+                          Categoria
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Ex: Eletrônicos..."
+                          value={productCategory}
+                          onChange={(e) => setProductCategory(e.target.value)}
+                          className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                          list="categories-datalist"
+                        />
+                        <datalist id="categories-datalist">
+                          {categories.filter(c => c !== 'Todos').map((cat, idx) => (
+                            <option key={idx} value={cat} />
+                          ))}
+                        </datalist>
+                      </div>
+                    </div>
+
+                    {/* Grid: avgQty1x & avgQty3x */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">
+                          Qtd Média 1x
+                        </label>
+                        <input
+                          type="number"
+                          step="1"
+                          placeholder="Ex: 15"
+                          value={avgQty1x}
+                          onChange={(e) => setAvgQty1x(e.target.value)}
+                          className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">
+                          Qtd Média 3x
+                        </label>
+                        <input
+                          type="number"
+                          step="1"
+                          placeholder="Ex: 45"
+                          value={avgQty3x}
+                          onChange={(e) => setAvgQty3x(e.target.value)}
+                          className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Callout to Correlation Tab */}
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <Link2 className="h-4 w-4 text-indigo-600 shrink-0" />
+                        <p className="text-xs text-slate-600">
+                          {correlatedItemsList.length > 0 ? (
+                            <span>Este produto possui <strong className="text-indigo-700 font-mono">{correlatedItemsList.length} correlação(ões)</strong> configurada(s).</span>
+                          ) : (
+                            <span>Compra este produto em caixa fechada ou com outro SKU de fornecedor?</span>
+                          )}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveModalTab('correlations')}
+                        className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer transition-colors"
+                      >
+                        Acessar Aba Correlação <ArrowRight className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: ITENS CORRELACIONADOS */}
+                {activeModalTab === 'correlations' && (
+                  <div className="space-y-4 animate-in fade-in duration-150">
+                    
+                    {/* Educational Banner */}
+                    <div className="p-4 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs space-y-2">
+                      <div className="flex items-center gap-2 text-indigo-950 font-bold text-sm">
+                        <Link2 className="h-4.5 w-4.5 text-indigo-600" />
+                        <span>Correlação de Itens e Desmembramento</span>
+                      </div>
+                      <p className="text-indigo-900 leading-relaxed">
+                        Vincule códigos de compra ou embalagens fechadas que são desmembradas em unidades deste produto de venda.
+                      </p>
+                      <div className="bg-white/90 border border-indigo-200/70 rounded-lg p-2.5 text-[11px] text-slate-700 flex items-center gap-2">
+                        <span className="font-bold text-indigo-700 shrink-0">Exemplo:</span>
+                        <span>Item de Venda: <strong className="font-mono text-slate-900">{productCode || 'B501-WHITE'}</strong> ➔ Código de Compra: <strong className="font-mono text-slate-900">B501-WH-BP</strong> (caixa c/ 10pçs) com Múltiplo <strong className="text-indigo-700 font-mono">10</strong></span>
+                      </div>
+                    </div>
+
+                    {/* Correlation specific error */}
+                    {correlationFormError && (
+                      <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-start gap-2">
+                        <AlertCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                        <span>{correlationFormError}</span>
+                      </div>
+                    )}
+
+                    {/* Inputs Card */}
+                    <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-4 space-y-3.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                          <Boxes className="h-3.5 w-3.5 text-indigo-600" />
+                          Vincular Código Correlacionado
+                        </span>
+                        <span className="text-[11px] text-slate-400">
+                          Preencha os campos abaixo
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                        {/* Correlation Code */}
+                        <div className="sm:col-span-7">
+                          <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">
+                            Código Correlacionado (SKU de Compra / Caixa) *
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="Ex: B501-WH-BP"
+                            value={correlationCode}
+                            onChange={(e) => {
+                              setCorrelationCode(e.target.value.toUpperCase());
+                              setCorrelationFormError('');
+                            }}
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 font-mono font-semibold"
+                            list="catalog-correlation-suggestions"
+                          />
+                          <datalist id="catalog-correlation-suggestions">
+                            {products
+                              .filter(p => p.code !== productCode)
+                              .map((p, idx) => (
+                                <option key={idx} value={p.code}>
+                                  {p.name} {p.category ? `(${p.category})` : ''}
+                                </option>
+                              ))}
+                          </datalist>
+
+                          {/* Live catalog match status */}
+                          {correlationCode.trim() && (
+                            <div className="mt-1 text-[11px]">
+                              {matchedCorrelationProduct ? (
+                                <span className="text-emerald-700 flex items-center gap-1 font-medium">
+                                  <Check className="h-3 w-3 text-emerald-600" />
+                                  Item no catálogo: {matchedCorrelationProduct.name}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 italic">
+                                  ℹ️ Código externo / de fornecedor (não cadastrado no catálogo)
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Multiplier */}
+                        <div className="sm:col-span-5">
+                          <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">
+                            Múltiplo (Conversão) *
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            placeholder="Ex: 10"
+                            value={correlationMultiplier}
+                            onChange={(e) => {
+                              setCorrelationMultiplier(e.target.value);
+                              setCorrelationFormError('');
+                            }}
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 font-mono font-bold"
+                          />
+                          <span className="text-[10px] text-slate-400 block mt-1">
+                            Qtd gerada por 1 un deste código
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Description / Packaging notes */}
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">
+                          Descrição da Embalagem / Observações (Opcional)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Ex: Caixa fechada com 10 peças / Embalagem Master"
+                          value={correlationDescription}
+                          onChange={(e) => setCorrelationDescription(e.target.value)}
+                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      {/* Live conversion simulation banner */}
+                      {correlationCode.trim() && correlationMultiplier.trim() && !isNaN(parseFloat(correlationMultiplier)) && parseFloat(correlationMultiplier) > 0 && (
+                        <div className="p-3 bg-sky-50 border border-sky-200 rounded-xl flex items-center justify-between text-xs text-sky-950 animate-in fade-in">
+                          <div className="flex items-center gap-2.5">
+                            <Boxes className="h-4 w-4 text-sky-600 shrink-0" />
+                            <div>
+                              <span className="font-bold">Regra de Desmembramento Ativa: </span>
+                              <span className="text-sky-900">
+                                1 un de <strong className="font-mono bg-sky-100 px-1.5 py-0.5 rounded text-sky-950 font-bold">{correlationCode.trim()}</strong> equivale a <strong className="text-indigo-700 font-mono font-bold text-sm">{correlationMultiplier} un</strong> de <strong className="font-mono bg-sky-100 px-1.5 py-0.5 rounded text-sky-950 font-bold">{productCode || 'este produto'}</strong>
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Action buttons inside correlation box */}
+                      <div className="flex items-center justify-end gap-2 pt-1">
+                        {(correlationCode || correlationMultiplier || correlationDescription) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCorrelationCode('');
+                              setCorrelationMultiplier('');
+                              setCorrelationDescription('');
+                              setCorrelationFormError('');
+                            }}
+                            className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-700 hover:bg-slate-200/60 rounded-lg transition-all cursor-pointer"
+                          >
+                            Limpar Campos
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleAddCorrelationToList}
+                          className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          <span>Adicionar à Lista</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Configured Correlations Table / List */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                          Correlações Salvas para este Produto ({correlatedItemsList.length})
+                        </h4>
+                        {correlatedItemsList.length > 0 && (
+                          <span className="text-[10px] text-slate-400">
+                            Serão salvas junto com o produto ao confirmar
+                          </span>
+                        )}
+                      </div>
+
+                      {correlatedItemsList.length === 0 ? (
+                        <div className="p-6 border border-dashed border-slate-200 rounded-xl text-center text-slate-400">
+                          <Link2 className="h-7 w-7 mx-auto text-slate-300 mb-1.5" />
+                          <p className="font-semibold text-slate-600 text-xs">Nenhum item correlacionado ainda</p>
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            Preencha o código (ex: B501-WH-BP) e o múltiplo (ex: 10) acima e clique em "Adicionar à Lista" ou diretamente em "Salvar Alterações".
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                          <table className="w-full text-left border-collapse text-xs">
+                            <thead>
+                              <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
+                                <th className="py-2.5 px-3">Cód. Correlacionado</th>
+                                <th className="py-2.5 px-3">Múltiplo</th>
+                                <th className="py-2.5 px-3">Conversão Direta</th>
+                                <th className="py-2.5 px-3">Descrição / Obs</th>
+                                <th className="py-2.5 px-3 text-right">Ação</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {correlatedItemsList.map((item, idx) => (
+                                <tr key={item.id || idx} className="hover:bg-slate-50/70">
+                                  <td className="py-2.5 px-3 font-mono font-bold text-indigo-900">
+                                    <span className="bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-0.5 rounded-md">
+                                      {item.code}
+                                    </span>
+                                  </td>
+                                  <td className="py-2.5 px-3 font-mono font-bold text-slate-800">
+                                    {item.multiplier}x
+                                  </td>
+                                  <td className="py-2.5 px-3 text-slate-600">
+                                    1 un = <strong className="font-mono text-indigo-700">{item.multiplier} un</strong> de {productCode || 'venda'}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-slate-500 italic">
+                                    {item.description || '-'}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-right">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveCorrelation(item.code)}
+                                      className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded transition-colors cursor-pointer"
+                                      title="Remover correlação"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+
+                  </div>
                 )}
               </div>
 
-              {/* Product Description / Name */}
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
-                  Nome do Produto / Descrição *
-                </label>
-                <input
-                  type="text"
-                  placeholder="Ex: Teclado Mecânico RGB Wireless"
-                  value={productName}
-                  onChange={(e) => setProductName(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-semibold"
-                  required
-                />
-              </div>
-
-              {/* Grid: pr_cod & codigoStructured */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
-                    Código Interno (pr_cod)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="99999"
-                    placeholder="Ex: 10001"
-                    value={prCod}
-                    onChange={(e) => setPrCod(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
-                    Cód. Estruturado (codigo)
-                  </label>
-                  <input
-                    type="text"
-                    maxLength={10}
-                    placeholder="Ex: PROD000001"
-                    value={codigoStructured}
-                    onChange={(e) => setCodigoStructured(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
-                  />
-                </div>
-              </div>
-
-              {/* Grid: lote & category */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
-                    Lote do Produto
-                  </label>
-                  <input
-                    type="text"
-                    maxLength={10}
-                    placeholder="Ex: LOTE000001"
-                    value={lote}
-                    onChange={(e) => setLote(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
-                    Categoria
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Ex: Eletrônicos..."
-                    value={productCategory}
-                    onChange={(e) => setProductCategory(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
-                    list="categories-datalist"
-                  />
-                  <datalist id="categories-datalist">
-                    {categories.filter(c => c !== 'Todos').map((cat, idx) => (
-                      <option key={idx} value={cat} />
-                    ))}
-                  </datalist>
-                </div>
-              </div>
-
-              {/* Grid: avgQty1x & avgQty3x */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
-                    Qtd Média 1x
-                  </label>
-                  <input
-                    type="number"
-                    step="1"
-                    placeholder="Ex: 15"
-                    value={avgQty1x}
-                    onChange={(e) => setAvgQty1x(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
-                    Qtd Média 3x
-                  </label>
-                  <input
-                    type="number"
-                    step="1"
-                    placeholder="Ex: 45"
-                    value={avgQty3x}
-                    onChange={(e) => setAvgQty3x(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
-                  />
-                </div>
-              </div>
-
               {/* Footer Actions */}
-              <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-500 rounded-lg font-semibold text-sm transition-all cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold text-sm shadow-sm hover:shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Check className="h-4 w-4" />
-                  {editingProduct ? 'Salvar Alterações' : 'Confirmar Cadastro'}
-                </button>
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100 shrink-0 mt-4">
+                <div className="text-xs text-slate-400">
+                  {activeModalTab === 'details' ? (
+                    <span>Aba 1 de 2: Dados Principais</span>
+                  ) : (
+                    <span>Aba 2 de 2: Itens Correlacionados</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsModalOpen(false)}
+                    className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl font-semibold text-sm transition-all cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-sm shadow-sm hover:shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Check className="h-4 w-4" />
+                    {editingProduct ? 'Salvar Alterações' : 'Confirmar Cadastro'}
+                  </button>
+                </div>
               </div>
 
             </form>
