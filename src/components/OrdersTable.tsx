@@ -18,14 +18,18 @@ import {
   CheckCircle2,
   PackageCheck,
   RefreshCw,
-  Clipboard
+  Clipboard,
+  Zap
 } from 'lucide-react';
-import { OrderHeader, OrderItem, Product, UserRole, WebhookConfig, FieldMapping } from '../types';
+import { OrderHeader, OrderItem, Product, UserRole, WebhookConfig, FieldMapping, StockBalance, Warehouse, OrderPriority } from '../types';
 import { executeProxyWebhook } from '../utils/proxyWebhook';
+import { calculateOrderPriority, getPriorityBadgeClasses, OrderPriorityEvaluation } from '../utils/orderPriority';
 
 interface OrdersTableProps {
   orders: OrderHeader[];
   products: Product[];
+  stock?: StockBalance[];
+  warehouses?: Warehouse[];
   onAddOrder: (order: Omit<OrderHeader, 'id'>) => void;
   onEditOrder: (order: OrderHeader) => void;
   onDeleteOrder: (id: string) => void;
@@ -39,6 +43,8 @@ interface OrdersTableProps {
 export default function OrdersTable({ 
   orders, 
   products, 
+  stock = [],
+  warehouses = [],
   onAddOrder, 
   onEditOrder, 
   onDeleteOrder,
@@ -680,6 +686,14 @@ export default function OrdersTable({
         }
       });
 
+      // Cálculo dinâmico da Prioridade com base no saldo de estoque nos grupos "São Paulo" e "Miami"
+      addLog('Iniciando o cálculo dinâmico de Prioridade dos pedidos com base no saldo de estoque (São Paulo / Miami)...');
+      validImportedItems.forEach(order => {
+        const prioEval = calculateOrderPriority(order.items, stock, warehouses, products);
+        order.priority = prioEval.priority;
+        addLog(`Pedido "${order.orderNumber}": Prioridade definida como "${prioEval.priority}" (${prioEval.summary}).`);
+      });
+
       // Import the validated orders replacing all current ones
       if (onImportOrders) {
         onImportOrders(validImportedItems, true);
@@ -732,7 +746,7 @@ export default function OrdersTable({
   const [orderNumber, setOrderNumber] = useState('');
   const [clientName, setClientName] = useState('');
   const [date, setDate] = useState('');
-  const [priority, setPriority] = useState<'Alta' | 'Média' | 'Baixa'>('Média');
+  const [priority, setPriority] = useState<OrderPriority>('Alta');
   const [notes, setNotes] = useState('');
   
   // Order Form State (Items list inside the order)
@@ -753,16 +767,49 @@ export default function OrdersTable({
     }));
   };
 
+  // Memoized dynamic priority evaluation for each order based on current stock
+  const orderEvaluations = useMemo(() => {
+    const map = new Map<string, OrderPriorityEvaluation>();
+    orders.forEach(ord => {
+      const evalRes = calculateOrderPriority(ord.items, stock, warehouses, products);
+      map.set(ord.id || ord.orderNumber, evalRes);
+    });
+    return map;
+  }, [orders, stock, warehouses, products]);
+
+  // Recalculate priority of all current orders in table using stock
+  const handleRecalculateAllPriorities = () => {
+    if (!orders || orders.length === 0) return;
+    const updated = orders.map(ord => {
+      const evalRes = calculateOrderPriority(ord.items, stock, warehouses, products);
+      return {
+        ...ord,
+        priority: evalRes.priority
+      };
+    });
+    if (onImportOrders) {
+      onImportOrders(updated, true);
+    }
+  };
+
   // Filter orders
   const filteredOrders = useMemo(() => {
     return orders.filter(ord => {
       const matchesSearch = 
         ord.orderNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        ord.clientName.toLowerCase().includes(searchTerm.toLowerCase());
+        ord.clientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (ord.notes && ord.notes.toLowerCase().includes(searchTerm.toLowerCase()));
       
-      const matchesPriority = 
-        priorityFilter === 'Todos' || 
-        ord.priority === priorityFilter;
+      let matchesPriority = true;
+      if (priorityFilter !== 'Todos') {
+        const ordPrioNorm = (ord.priority || '').trim().toLowerCase();
+        const filtPrioNorm = priorityFilter.trim().toLowerCase();
+        if (filtPrioNorm === 'baixo') {
+          matchesPriority = ordPrioNorm === 'baixo' || ordPrioNorm === 'baixa';
+        } else {
+          matchesPriority = ordPrioNorm === filtPrioNorm;
+        }
+      }
 
       return matchesSearch && matchesPriority;
     });
@@ -994,12 +1041,13 @@ export default function OrdersTable({
             <select
               value={priorityFilter}
               onChange={(e) => setPriorityFilter(e.target.value)}
-              className="border border-slate-300 rounded-lg text-sm bg-white px-3 py-1.5 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
+              className="border border-slate-300 rounded-lg text-sm bg-white px-3 py-1.5 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 font-medium"
             >
               <option value="Todos">Todas as Prioridades</option>
-              <option value="Alta">Alta</option>
-              <option value="Média">Média</option>
-              <option value="Baixa">Baixa</option>
+              <option value="Alta">Alta (São Paulo - Verde)</option>
+              <option value="Médio Alto">Médio Alto (SP e Miami - Laranja)</option>
+              <option value="Médio Baixo">Médio Baixo (Saldo Parcial - Amarelo)</option>
+              <option value="Baixo">Baixo (Sem Estoque - Vermelho)</option>
             </select>
           </div>
         </div>
@@ -1024,6 +1072,18 @@ export default function OrdersTable({
               </>
             )}
           </button>
+
+          {orders.length > 0 && canManageOrders && (
+            <button
+              id="btn-recalculate-priorities"
+              onClick={handleRecalculateAllPriorities}
+              className="flex items-center justify-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 px-3 py-2 text-sm font-semibold rounded-lg shadow-xs transition-all cursor-pointer"
+              title="Recalcular prioridades de todos os pedidos pelo saldo atual de estoque em São Paulo e Miami"
+            >
+              <Zap className="h-4 w-4 text-amber-600" />
+              <span>Recalcular Prioridades</span>
+            </button>
+          )}
 
           {orders.length > 0 && canManageOrders && (
             <button
@@ -1121,15 +1181,20 @@ export default function OrdersTable({
 
                         {/* Priority Badge */}
                         <td className="px-6 py-4 text-center">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                            order.priority === 'Alta' 
-                              ? 'bg-rose-100 text-rose-700' 
-                              : order.priority === 'Média' 
-                                ? 'bg-amber-100 text-amber-700' 
-                                : 'bg-slate-100 text-slate-600'
-                          }`}>
-                            {order.priority}
-                          </span>
+                          {(() => {
+                            const badgeCfg = getPriorityBadgeClasses(order.priority);
+                            const evalInfo = orderEvaluations.get(order.id || order.orderNumber);
+                            const tooltip = evalInfo?.summary || `Prioridade: ${order.priority}`;
+                            return (
+                              <span 
+                                title={tooltip}
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border shadow-2xs transition-transform hover:scale-105 cursor-default ${badgeCfg.badge}`}
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full ${badgeCfg.dot}`} />
+                                {badgeCfg.label}
+                              </span>
+                            );
+                          })()}
                         </td>
 
                         {/* Quantity items */}
@@ -1171,11 +1236,23 @@ export default function OrdersTable({
                           <td colSpan={canManageOrders ? 8 : 7} className="px-8 py-4 bg-slate-50/50 border-t border-b border-slate-100 animate-slide-down">
                             <div className="bg-white rounded-lg border border-slate-200/60 p-4 shadow-2xs space-y-3">
                               
-                              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                                  <Briefcase className="h-3.5 w-3.5 text-indigo-500" />
-                                  Itens Inclusos no Pedido
-                                </h4>
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-2 gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                                    <Briefcase className="h-3.5 w-3.5 text-indigo-500" />
+                                    Itens Inclusos no Pedido
+                                  </h4>
+                                  {(() => {
+                                    const evalInfo = orderEvaluations.get(order.id || order.orderNumber);
+                                    if (!evalInfo) return null;
+                                    const badgeCfg = getPriorityBadgeClasses(evalInfo.priority);
+                                    return (
+                                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border ${badgeCfg.badge}`}>
+                                        {evalInfo.summary}
+                                      </span>
+                                    );
+                                  })()}
+                                </div>
                                 {order.notes && (
                                   <div className="text-xs text-slate-500 italic max-w-md truncate">
                                     <strong className="text-slate-600">Obs:</strong> {order.notes}
@@ -1185,31 +1262,53 @@ export default function OrdersTable({
 
                               {/* Items list inside the order */}
                               <div className="divide-y divide-slate-100">
-                                {order.items.map((it, idx) => (
-                                  <div key={it.id || idx} className="py-2.5 flex items-center justify-between text-xs gap-4">
-                                    <div className="flex items-center gap-3">
-                                      <span className="font-mono font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-sm">
-                                        {it.productCode}
-                                      </span>
-                                      <span className="font-semibold text-slate-700">{it.productName}</span>
-                                    </div>
+                                {order.items.map((it, idx) => {
+                                  const evalInfo = orderEvaluations.get(order.id || order.orderNumber);
+                                  const itemStockDetail = evalInfo?.itemsDetails.find(d => d.productCode === it.productCode);
+                                  
+                                  return (
+                                    <div key={it.id || idx} className="py-2.5 flex flex-col md:flex-row md:items-center justify-between text-xs gap-3">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-mono font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-sm">
+                                          {it.productCode}
+                                        </span>
+                                        <span className="font-semibold text-slate-700">{it.productName}</span>
 
-                                    <div className="flex items-center gap-6 font-mono">
-                                      <div>
-                                        <span className="text-slate-400">Qtd:</span>{' '}
-                                        <strong className="text-slate-700">{it.quantityOrdered} un</strong>
+                                        {/* Item stock status badge */}
+                                        {itemStockDetail && (
+                                          itemStockDetail.status === 'SP' ? (
+                                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                              Saldo São Paulo ({itemStockDetail.spStock.toLocaleString('pt-BR')} un)
+                                            </span>
+                                          ) : itemStockDetail.status === 'MIAMI' ? (
+                                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-100 text-orange-800 border border-orange-300">
+                                              Saldo Miami ({itemStockDetail.miamiStock.toLocaleString('pt-BR')} un)
+                                            </span>
+                                          ) : (
+                                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                                              Sem Saldo de Estoque
+                                            </span>
+                                          )
+                                        )}
                                       </div>
-                                      <div>
-                                        <span className="text-slate-400">Preço:</span>{' '}
-                                        <strong className="text-slate-700">$ {it.unitPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
-                                      </div>
-                                      <div>
-                                        <span className="text-slate-400">Subtotal:</span>{' '}
-                                        <strong className="text-slate-900">$ {(it.quantityOrdered * it.unitPrice).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+
+                                      <div className="flex items-center gap-6 font-mono">
+                                        <div>
+                                          <span className="text-slate-400">Qtd:</span>{' '}
+                                          <strong className="text-slate-700">{it.quantityOrdered} un</strong>
+                                        </div>
+                                        <div>
+                                          <span className="text-slate-400">Preço:</span>{' '}
+                                          <strong className="text-slate-700">$ {it.unitPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+                                        </div>
+                                        <div>
+                                          <span className="text-slate-400">Subtotal:</span>{' '}
+                                          <strong className="text-slate-900">$ {(it.quantityOrdered * it.unitPrice).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+                                        </div>
                                       </div>
                                     </div>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
 
                               {/* Summary footer */}
@@ -1309,15 +1408,39 @@ export default function OrdersTable({
 
                   {/* Priority */}
                   <div className="md:col-span-6 space-y-1.5">
-                    <label className="text-xs font-bold text-slate-600 uppercase">Prioridade de Expedição</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-600 uppercase">Prioridade de Expedição</label>
+                      {formItems.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const dummyItems: OrderItem[] = formItems.map((fi, idx) => ({
+                              id: `tmp-${idx}`,
+                              productCode: fi.productCode,
+                              productName: fi.productName,
+                              quantityOrdered: fi.quantityOrdered,
+                              unitPrice: fi.unitPrice
+                            }));
+                            const prioEval = calculateOrderPriority(dummyItems, stock, warehouses, products);
+                            setPriority(prioEval.priority);
+                          }}
+                          className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer"
+                          title="Recalcular com base no saldo de estoque em São Paulo e Miami"
+                        >
+                          <Zap className="h-3 w-3" />
+                          Calcular por Estoque
+                        </button>
+                      )}
+                    </div>
                     <select
                       value={priority}
-                      onChange={(e) => setPriority(e.target.value as 'Alta' | 'Média' | 'Baixa')}
+                      onChange={(e) => setPriority(e.target.value as OrderPriority)}
                       className="w-full border border-slate-300 rounded-lg text-sm bg-white px-3 py-2 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 font-semibold"
                     >
-                      <option value="Alta">Alta (Despacho Urgente)</option>
-                      <option value="Média">Média (Fila de Coleta Padrão)</option>
-                      <option value="Baixa">Baixa (Sem pressa de liberação)</option>
+                      <option value="Alta">Alta (Todos os itens com saldo em São Paulo)</option>
+                      <option value="Médio Alto">Médio Alto (Saldo em São Paulo e Miami)</option>
+                      <option value="Médio Baixo">Médio Baixo (Saldo parcial / Faltas de estoque)</option>
+                      <option value="Baixo">Baixo (Nenhum item com saldo em estoque)</option>
                     </select>
                   </div>
 

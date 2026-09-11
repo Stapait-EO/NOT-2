@@ -19,12 +19,14 @@ export interface OrderItem {
   unitPrice: number;
 }
 
+export type OrderPriority = 'Alta' | 'Médio Alto' | 'Médio Baixo' | 'Baixo' | 'Média' | 'Baixa';
+
 export interface OrderHeader {
   id: string;
   orderNumber: string;
   clientName: string;
   date: string;
-  priority: 'Alta' | 'Média' | 'Baixa';
+  priority: OrderPriority;
   items: OrderItem[];
   notes?: string;
 }

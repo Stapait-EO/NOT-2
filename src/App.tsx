@@ -1040,6 +1040,8 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
           <OrdersTable 
             orders={orders} 
             products={products}
+            stock={stock}
+            warehouses={warehouses}
             onAddOrder={handleAddOrder}
             onEditOrder={handleEditOrder}
             onDeleteOrder={handleDeleteOrder}

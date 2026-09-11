@@ -21,6 +21,7 @@ import {
   Truck
 } from 'lucide-react';
 import { OrderHeader, StockBalance, OrderItem, Warehouse, Product } from '../types';
+import { getPriorityBadgeClasses } from '../utils/orderPriority';
 
 // Helper function to classify orders under an allocation mapping
 function classifyOrders(
@@ -1856,9 +1857,15 @@ export default function Dashboard({ orders, stock, warehouses, products }: Dashb
                                               <div className="flex items-center gap-1.5 flex-wrap">
                                                 <span className="font-mono font-bold text-slate-900">{o.orderNumber}</span>
                                                 <span className="text-slate-500 truncate max-w-[120px]">({o.clientName})</span>
-                                                <span className={`text-[9px] px-1 rounded ${
-                                                  o.priority === 'Alta' ? 'bg-rose-100 text-rose-700 font-bold' : 'bg-slate-100 text-slate-500'
-                                                }`}>{o.priority}</span>
+                                                {(() => {
+                                                  const badgeCfg = getPriorityBadgeClasses(o.priority);
+                                                  return (
+                                                    <span className={`inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded font-bold border ${badgeCfg.badge}`}>
+                                                      <span className={`w-1 h-1 rounded-full ${badgeCfg.dot}`} />
+                                                      {badgeCfg.label}
+                                                    </span>
+                                                  );
+                                                })()}
                                               </div>
                                               <div className="mt-1">
                                                 <span className={`inline-flex items-center gap-1 text-[10px] font-medium border px-1.5 py-0.5 rounded ${statusColor}`}>
@@ -2134,9 +2141,15 @@ export default function Dashboard({ orders, stock, warehouses, products }: Dashb
                                                 <div className="flex items-center gap-1.5 flex-wrap">
                                                   <span className="font-mono font-bold text-slate-900">{o.orderNumber}</span>
                                                   <span className="text-slate-500 truncate max-w-[120px]">({o.clientName})</span>
-                                                  <span className={`text-[9px] px-1 rounded ${
-                                                    o.priority === 'Alta' ? 'bg-rose-100 text-rose-700 font-bold' : 'bg-slate-100 text-slate-500'
-                                                  }`}>{o.priority}</span>
+                                                  {(() => {
+                                                    const badgeCfg = getPriorityBadgeClasses(o.priority);
+                                                    return (
+                                                      <span className={`inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded font-bold border ${badgeCfg.badge}`}>
+                                                        <span className={`w-1 h-1 rounded-full ${badgeCfg.dot}`} />
+                                                        {badgeCfg.label}
+                                                      </span>
+                                                    );
+                                                  })()}
                                                 </div>
                                                 <div className="mt-1">
                                                   <span className={`inline-flex items-center gap-1 text-[10px] font-medium border px-1.5 py-0.5 rounded ${statusColor}`}>
@@ -2270,15 +2283,15 @@ export default function Dashboard({ orders, stock, warehouses, products }: Dashb
                         <div className="space-y-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-mono font-bold text-slate-800 text-sm">{order.orderNumber}</span>
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
-                              order.priority === 'Alta' 
-                                ? 'bg-rose-100 text-rose-700' 
-                                : order.priority === 'Média' 
-                                  ? 'bg-amber-100 text-amber-700' 
-                                  : 'bg-slate-100 text-slate-600'
-                            }`}>
-                              {order.priority}
-                            </span>
+                            {(() => {
+                              const badgeCfg = getPriorityBadgeClasses(order.priority);
+                              return (
+                                <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeCfg.badge}`}>
+                                  <span className={`w-1 h-1 rounded-full ${badgeCfg.dot}`} />
+                                  {badgeCfg.label}
+                                </span>
+                              );
+                            })()}
                             <span className="text-[10px] text-slate-400 font-mono">
                               {new Date(order.date).toLocaleDateString('pt-BR')}
                             </span>
