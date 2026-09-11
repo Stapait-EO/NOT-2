@@ -17,15 +17,26 @@ export interface OrderPriorityEvaluation {
 }
 
 export function getWarehouseGroup(whName: string, warehouses: Warehouse[] = []): string {
-  const cleanWh = (whName || '').trim();
-  const wh = warehouses.find(w => w.name.trim().toLowerCase() === cleanWh.toLowerCase());
-  if (!wh) {
-    if (cleanWh.startsWith('0002')) return "São Paulo";
-    if (cleanWh.startsWith('0004')) return "Miami";
-    return "Outros";
+  const cleanWh = (whName || '').trim().toLowerCase();
+  if (!cleanWh) return "Outros";
+
+  const wh = warehouses.find(w => {
+    const wName = w.name.trim().toLowerCase();
+    return wName === cleanWh || cleanWh.startsWith(wName) || wName.startsWith(cleanWh);
+  });
+
+  if (wh) {
+    if (!wh.isActive) return "Inativo";
+    if (wh.groupName?.trim()) return wh.groupName.trim();
   }
-  if (!wh.isActive) return "Inativo";
-  return wh.groupName?.trim() || "Outros";
+
+  if (cleanWh.startsWith('0002') || cleanWh.includes('são paulo') || cleanWh.includes('sao paulo') || cleanWh.includes('matriz')) {
+    return "São Paulo";
+  }
+  if (cleanWh.startsWith('0004') || cleanWh.includes('miami')) {
+    return "Miami";
+  }
+  return "Outros";
 }
 
 /**
@@ -93,6 +104,7 @@ export function calculateOrderPriority(
 
   const itemsDetails = items.map(item => {
     const pCode = (item.productCode || '').trim().toUpperCase();
+    const pName = (item.productName || '').trim().toLowerCase();
 
     // Find all related codes for correlation
     const relatedCodes = new Set<string>();
@@ -116,7 +128,8 @@ export function calculateOrderPriority(
     const matchedProd = products.find(p => 
       p.code.toUpperCase() === pCode ||
       p.codigo?.toUpperCase() === pCode ||
-      (p.pr_cod !== undefined && String(p.pr_cod).toUpperCase() === pCode)
+      (p.pr_cod !== undefined && String(p.pr_cod).toUpperCase() === pCode) ||
+      (pName && p.name && p.name.trim().toLowerCase() === pName)
     );
     if (matchedProd) {
       relatedCodes.add(matchedProd.code.toUpperCase());
@@ -132,16 +145,28 @@ export function calculateOrderPriority(
       const whGroup = getWarehouseGroup(stk.warehouse, warehouses);
       if (whGroup === 'Inativo') return;
 
-      const stkCode = (stk.productCode || stk.codigo || '').trim().toUpperCase();
-      if (!stkCode || !relatedCodes.has(stkCode)) return;
+      const stkProductCode = (stk.productCode || '').trim().toUpperCase();
+      const stkCodigo = (stk.codigo || '').trim().toUpperCase();
+      const stkPrCod = stk.pr_cod !== undefined ? String(stk.pr_cod).trim().toUpperCase() : '';
+      const stkProdName = (stk.productName || '').trim().toLowerCase();
+
+      const matchesStock = (stkProductCode && relatedCodes.has(stkProductCode)) ||
+                           (stkCodigo && relatedCodes.has(stkCodigo)) ||
+                           (stkPrCod && relatedCodes.has(stkPrCod)) ||
+                           (pName && stkProdName && stkProdName === pName);
+
+      if (!matchesStock) return;
 
       const qty = Number(stk.quantity || (stk as any).saldo || 0);
       if (qty <= 0) return;
 
-      const isSP = whGroup.toLowerCase().includes('são paulo') || whGroup.toLowerCase().includes('sao paulo');
+      const groupLower = whGroup.toLowerCase();
+      const isSP = groupLower.includes('são paulo') || groupLower.includes('sao paulo') || groupLower.startsWith('sp');
+      const isMiami = groupLower.includes('miami') || groupLower.startsWith('mia');
+
       if (isSP) {
         spStock += qty;
-      } else {
+      } else if (isMiami) {
         miamiStock += qty;
       }
     });

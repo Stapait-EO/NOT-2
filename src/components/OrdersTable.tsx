@@ -106,6 +106,18 @@ export default function OrdersTable({
       return isNaN(parsed) ? 0 : parsed;
     };
 
+    // Helper to get property case-insensitively from an object
+    const getFieldVal = (item: any, key: string | undefined): any => {
+      if (!item || typeof item !== 'object' || !key) return undefined;
+      if (item[key] !== undefined) return item[key];
+      const trimmed = String(key).trim();
+      if (item[trimmed] !== undefined) return item[trimmed];
+      const lowerKey = trimmed.toLowerCase();
+      const directKey = Object.keys(item).find(k => k.trim().toLowerCase() === lowerKey);
+      if (directKey && item[directKey] !== undefined) return item[directKey];
+      return undefined;
+    };
+
     // Helper to resolve mapped values, supporting expressions with '+', '-', '*', '/' and parentheses (e.g. (i_Vtotal+i_vIpi)/i_Qtdade)
     const resolveMappedValue = (item: any, mappingKey: string | undefined): any => {
       if (!mappingKey) return undefined;
@@ -115,7 +127,7 @@ export default function OrdersTable({
       // If it is a simple key without any operators, return directly (preserving types like strings/objects)
       const hasOperators = /[\+\-\*\/\(\)]/.test(trimmedKey);
       if (!hasOperators) {
-        return item[trimmedKey];
+        return getFieldVal(item, trimmedKey);
       }
 
       // It has operators, so treat it as an arithmetic expression
@@ -131,7 +143,7 @@ export default function OrdersTable({
 
         // Replace each found variable in the expression with its numeric value
         variablesFound.forEach(varName => {
-          const val = item[varName];
+          const val = getFieldVal(item, varName);
           const numericVal = (val !== undefined && val !== null) ? parseWebhookMonetary(val) : 0;
           // Replace all occurrences of varName in expr using word boundaries
           const safeVarName = varName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -347,12 +359,17 @@ export default function OrdersTable({
         let rawItemsList: any[] = [];
         const possibleItemsKeys = ['items', 'itens', 'orderItems', 'produtos', 'lines', 'line_items', 'detalhes'];
         const mappedItemsKey = mapping?.mappings['items'];
-        if (mappedItemsKey && Array.isArray(webhookItem[mappedItemsKey])) {
-          rawItemsList = webhookItem[mappedItemsKey];
-        } else {
+        if (mappedItemsKey) {
+          const mappedVal = getFieldVal(webhookItem, mappedItemsKey);
+          if (Array.isArray(mappedVal)) {
+            rawItemsList = mappedVal;
+          }
+        }
+        if (rawItemsList.length === 0) {
           for (const key of possibleItemsKeys) {
-            if (Array.isArray(webhookItem[key])) {
-              rawItemsList = webhookItem[key];
+            const val = getFieldVal(webhookItem, key);
+            if (Array.isArray(val)) {
+              rawItemsList = val;
               break;
             }
           }
@@ -363,12 +380,31 @@ export default function OrdersTable({
 
         rawItemsList.forEach((rawItem) => {
           const mappedProdCodeKey = mapping?.mappings['itemProductCode'];
-          const itemProdCode = (mappedProdCodeKey && rawItem[mappedProdCodeKey] !== undefined) 
-            ? rawItem[mappedProdCodeKey] 
-            : (rawItem.productCode || rawItem.sku || rawItem.code || rawItem.pr_cod || rawItem.codigo || rawItem.cod || rawItem.cod_produto || rawItem.product_code || rawItem.productId);
+          let itemProdCode = mappedProdCodeKey ? resolveMappedValue(rawItem, mappedProdCodeKey) : undefined;
+          if (!itemProdCode || String(itemProdCode).trim() === '') {
+            itemProdCode = getFieldVal(rawItem, 'i_codprod') ||
+              getFieldVal(rawItem, 'i_modelo') ||
+              getFieldVal(rawItem, 'productCode') ||
+              getFieldVal(rawItem, 'sku') ||
+              getFieldVal(rawItem, 'code') ||
+              getFieldVal(rawItem, 'pr_cod') ||
+              getFieldVal(rawItem, 'codigo') ||
+              getFieldVal(rawItem, 'cod') ||
+              getFieldVal(rawItem, 'cod_produto') ||
+              getFieldVal(rawItem, 'product_code') ||
+              getFieldVal(rawItem, 'productId');
+          }
           
-          const rawNameKey = mapping?.mappings['itemName'] || 'productName';
-          const itemNameRaw = rawItem[rawNameKey] || rawItem.productName || rawItem.name || rawItem.descricao || rawItem.item || '';
+          const rawNameKey = mapping?.mappings['itemName'];
+          let itemNameRaw = rawNameKey ? resolveMappedValue(rawItem, rawNameKey) : undefined;
+          if (!itemNameRaw || String(itemNameRaw).trim() === '') {
+            itemNameRaw = getFieldVal(rawItem, 'i_nomeprod') ||
+              getFieldVal(rawItem, 'productName') ||
+              getFieldVal(rawItem, 'name') ||
+              getFieldVal(rawItem, 'descricao') ||
+              getFieldVal(rawItem, 'item') ||
+              '';
+          }
 
           if (String(itemProdCode || '').trim().toUpperCase() === 'SISTEMA' || 
               String(itemNameRaw || '').trim().toUpperCase() === 'SISTEMA') {
@@ -448,24 +484,63 @@ export default function OrdersTable({
         const headerFields = ['orderNumber', 'clientName', 'date', 'priority', 'notes', 'items'];
         headerFields.forEach(sysKey => {
           const webhookKey = mapping?.mappings[sysKey];
-          if (webhookKey && webhookItem[webhookKey] !== undefined) {
-            mappedHeader[sysKey] = webhookItem[webhookKey];
-          } else if (webhookItem[sysKey] !== undefined) {
-            mappedHeader[sysKey] = webhookItem[sysKey];
+          if (webhookKey) {
+            const mappedVal = resolveMappedValue(webhookItem, webhookKey);
+            if (mappedVal !== undefined) {
+              mappedHeader[sysKey] = mappedVal;
+            }
+          }
+          if (mappedHeader[sysKey] === undefined) {
+            mappedHeader[sysKey] = getFieldVal(webhookItem, sysKey);
           }
         });
 
-        // Resolve Order Header Fields
-        const orderNumberRaw = mappedHeader.orderNumber || webhookItem.orderNumber || webhookItem.order_number || webhookItem.numero || webhookItem.numero_pedido || webhookItem.id || webhookItem.code || webhookItem.pedido;
-        const clientNameRaw = mappedHeader.clientName || webhookItem.clientName || webhookItem.client || webhookItem.cliente || webhookItem.nome_cliente || webhookItem.customer;
-        const dateRaw = mappedHeader.date || webhookItem.date || webhookItem.data || webhookItem.data_pedido || webhookItem.created_at || webhookItem.emissao;
-        const priorityRaw = mappedHeader.priority || webhookItem.priority || webhookItem.prioridade || 'Média';
-        const notesRaw = mappedHeader.notes || webhookItem.notes || webhookItem.observacoes || webhookItem.obs || '';
+        // Resolve Order Header Fields with case-insensitivity and fallbacks
+        const orderNumberRaw = mappedHeader.orderNumber || 
+          getFieldVal(webhookItem, 'orderNumber') || 
+          getFieldVal(webhookItem, 'order_number') || 
+          getFieldVal(webhookItem, 'numero') || 
+          getFieldVal(webhookItem, 'numero_pedido') || 
+          getFieldVal(webhookItem, 'pedvenda') || 
+          getFieldVal(webhookItem, 'id') || 
+          getFieldVal(webhookItem, 'code') || 
+          getFieldVal(webhookItem, 'pedido');
+
+        const clientNameRaw = mappedHeader.clientName || 
+          getFieldVal(webhookItem, 'clientName') || 
+          getFieldVal(webhookItem, 'client') || 
+          getFieldVal(webhookItem, 'cliente') || 
+          getFieldVal(webhookItem, 'nome_clien') || 
+          getFieldVal(webhookItem, 'nome_cli2') || 
+          getFieldVal(webhookItem, 'nome_cliente') || 
+          getFieldVal(webhookItem, 'customer') ||
+          getFieldVal(webhookItem, 'codcliente');
+
+        const dateRaw = mappedHeader.date || 
+          getFieldVal(webhookItem, 'date') || 
+          getFieldVal(webhookItem, 'data_ped') || 
+          getFieldVal(webhookItem, 'dt_entrega') || 
+          getFieldVal(webhookItem, 'data') || 
+          getFieldVal(webhookItem, 'data_pedido') || 
+          getFieldVal(webhookItem, 'created_at') || 
+          getFieldVal(webhookItem, 'emissao');
+
+        const priorityRaw = mappedHeader.priority || 
+          getFieldVal(webhookItem, 'priority') || 
+          getFieldVal(webhookItem, 'prioridade') || 
+          'Média';
+
+        const notesRaw = mappedHeader.notes || 
+          getFieldVal(webhookItem, 'notes') || 
+          getFieldVal(webhookItem, 'observacoes') || 
+          getFieldVal(webhookItem, 'obs') || 
+          getFieldVal(webhookItem, 'ped_client') || 
+          '';
 
         if (!orderNumberRaw) {
           rejectedItems.push({
             item: webhookItem,
-            reason: `Pedido #${index + 1}: Nenhum número de pedido identificado (orderNumber, order_number, numero, id, code).`
+            reason: `Pedido #${index + 1}: Nenhum número de pedido identificado (orderNumber, order_number, numero, pedvenda, id, code).`
           });
           return;
         }
@@ -473,7 +548,7 @@ export default function OrdersTable({
         if (!clientNameRaw) {
           rejectedItems.push({
             item: webhookItem,
-            reason: `Pedido #${index + 1}: Nenhum nome de cliente identificado (clientName, client, cliente, customer).`
+            reason: `Pedido #${index + 1}: Nenhum nome de cliente identificado (clientName, client, cliente, nome_clien, nome_cli2, customer).`
           });
           return;
         }
@@ -496,13 +571,18 @@ export default function OrdersTable({
         
         let foundItemsKey = '';
         const mappedItemsKey = mapping?.mappings['items'];
-        if (mappedItemsKey && Array.isArray(webhookItem[mappedItemsKey])) {
-          rawItemsList = webhookItem[mappedItemsKey];
-          foundItemsKey = mappedItemsKey;
-        } else {
+        if (mappedItemsKey) {
+          const mappedVal = getFieldVal(webhookItem, mappedItemsKey);
+          if (Array.isArray(mappedVal)) {
+            rawItemsList = mappedVal;
+            foundItemsKey = mappedItemsKey;
+          }
+        }
+        if (rawItemsList.length === 0) {
           for (const key of possibleItemsKeys) {
-            if (Array.isArray(webhookItem[key])) {
-              rawItemsList = webhookItem[key];
+            const val = getFieldVal(webhookItem, key);
+            if (Array.isArray(val)) {
+              rawItemsList = val;
               foundItemsKey = key;
               break;
             }
@@ -525,12 +605,31 @@ export default function OrdersTable({
           
           // Try to get item mapping fields or defaults
           const mappedProdCodeKey = mapping?.mappings['itemProductCode'];
-          const itemProdCode = (mappedProdCodeKey && rawItem[mappedProdCodeKey] !== undefined) 
-            ? rawItem[mappedProdCodeKey] 
-            : (rawItem.productCode || rawItem.sku || rawItem.code || rawItem.pr_cod || rawItem.codigo || rawItem.cod || rawItem.cod_produto || rawItem.product_code || rawItem.productId);
+          let itemProdCode = mappedProdCodeKey ? resolveMappedValue(rawItem, mappedProdCodeKey) : undefined;
+          if (!itemProdCode || String(itemProdCode).trim() === '') {
+            itemProdCode = getFieldVal(rawItem, 'i_codprod') ||
+              getFieldVal(rawItem, 'i_modelo') ||
+              getFieldVal(rawItem, 'productCode') ||
+              getFieldVal(rawItem, 'sku') ||
+              getFieldVal(rawItem, 'code') ||
+              getFieldVal(rawItem, 'pr_cod') ||
+              getFieldVal(rawItem, 'codigo') ||
+              getFieldVal(rawItem, 'cod') ||
+              getFieldVal(rawItem, 'cod_produto') ||
+              getFieldVal(rawItem, 'product_code') ||
+              getFieldVal(rawItem, 'productId');
+          }
           
-          const rawNameKey = mapping?.mappings['itemName'] || 'productName';
-          const itemNameRaw = rawItem[rawNameKey] || rawItem.productName || rawItem.name || rawItem.descricao || rawItem.item || '';
+          const rawNameKey = mapping?.mappings['itemName'];
+          let itemNameRaw = rawNameKey ? resolveMappedValue(rawItem, rawNameKey) : undefined;
+          if (!itemNameRaw || String(itemNameRaw).trim() === '') {
+            itemNameRaw = getFieldVal(rawItem, 'i_nomeprod') ||
+              getFieldVal(rawItem, 'productName') ||
+              getFieldVal(rawItem, 'name') ||
+              getFieldVal(rawItem, 'descricao') ||
+              getFieldVal(rawItem, 'item') ||
+              '';
+          }
 
           const isSistema = String(itemProdCode || '').trim().toUpperCase() === 'SISTEMA' || 
                             String(itemNameRaw || '').trim().toUpperCase() === 'SISTEMA';
@@ -541,33 +640,36 @@ export default function OrdersTable({
             continue;
           }
 
-          if (!itemProdCode) {
+          if (!itemProdCode || String(itemProdCode).trim() === '') {
             orderRejected = true;
             rejectReason = `Código de produto ausente na linha do item #${itemIdx + 1} do pedido "${orderNumberRaw}".`;
             break;
           }
 
-          // Match product in catalog (verify if exists, case-insensitive, support pr_cod & codigo)
+          // Match product in catalog (verify if exists, case-insensitive, support pr_cod, codigo & name)
           const codeStr = String(itemProdCode).trim().toLowerCase();
+          const nameStr = String(itemNameRaw || '').trim().toLowerCase();
           const matchedProd = products.find(p => {
-            const matchCode = String(p.code).trim().toLowerCase() === codeStr;
+            const matchCode = String(p.code || '').trim().toLowerCase() === codeStr;
             const matchPrCod = p.pr_cod !== undefined && String(p.pr_cod).trim().toLowerCase() === codeStr;
             const matchCodigo = p.codigo !== undefined && String(p.codigo).trim().toLowerCase() === codeStr;
-            return matchCode || matchPrCod || matchCodigo;
+            const matchName = nameStr && String(p.name || '').trim().toLowerCase() === nameStr;
+            return matchCode || matchPrCod || matchCodigo || matchName;
           });
 
-          if (!matchedProd) {
-            orderRejected = true;
-            rejectReason = `Produto com código "${itemProdCode}" (linha #${itemIdx + 1}) não existe no cadastro do sistema.`;
-            break;
-          }
+          // Product code and name: prefer matched catalog product, fallback to payload data
+          const finalProdCode = matchedProd ? matchedProd.code : String(itemProdCode).trim();
+          const finalProdName = matchedProd ? matchedProd.name : String(itemNameRaw || itemProdCode).trim();
 
           // Quantity
           const mappedQtyKey = mapping?.mappings['itemQuantity'];
-          const qtyRaw = (mappedQtyKey && rawItem[mappedQtyKey] !== undefined)
-            ? rawItem[mappedQtyKey]
-            : (rawItem.quantityOrdered || rawItem.quantity || rawItem.quantidade || rawItem.qtd || rawItem.qty);
-          const quantityOrdered = Number(qtyRaw !== undefined ? qtyRaw : 1);
+          const qtyRaw = (mappedQtyKey !== undefined)
+            ? resolveMappedValue(rawItem, mappedQtyKey)
+            : undefined;
+          const finalQtyRaw = qtyRaw !== undefined
+            ? qtyRaw
+            : (getFieldVal(rawItem, 'i_qtdade') || getFieldVal(rawItem, 'quantityOrdered') || getFieldVal(rawItem, 'quantity') || getFieldVal(rawItem, 'quantidade') || getFieldVal(rawItem, 'qtd') || getFieldVal(rawItem, 'qty') || 1);
+          const quantityOrdered = Number(finalQtyRaw !== undefined ? finalQtyRaw : 1);
 
           // Price
           const mappedPriceKey = mapping?.mappings['itemUnitPrice'];
@@ -576,13 +678,13 @@ export default function OrdersTable({
             : undefined;
           const finalPriceRaw = priceRaw !== undefined
             ? priceRaw
-            : (rawItem.unitPrice || rawItem.price || rawItem.preco || rawItem.valor || rawItem.valor_unitario);
-          const unitPrice = finalPriceRaw !== undefined ? parseWebhookMonetary(finalPriceRaw) : ((matchedProd as any).pr_preco || 0);
+            : (getFieldVal(rawItem, 'i_preco') || getFieldVal(rawItem, 'unitPrice') || getFieldVal(rawItem, 'price') || getFieldVal(rawItem, 'preco') || getFieldVal(rawItem, 'valor') || getFieldVal(rawItem, 'valor_unitario'));
+          const unitPrice = finalPriceRaw !== undefined ? parseWebhookMonetary(finalPriceRaw) : (matchedProd ? ((matchedProd as any).pr_preco || 0) : 0);
 
           compiledOrderItems.push({
             id: `itm-${Date.now()}-${itemIdx}-${Math.floor(Math.random() * 1000)}`,
-            productCode: matchedProd.code,
-            productName: matchedProd.name,
+            productCode: finalProdCode,
+            productName: finalProdName,
             quantityOrdered,
             unitPrice
           });
@@ -597,18 +699,32 @@ export default function OrdersTable({
             api3ItemsArray.forEach((api3Item, api3Idx) => {
               // Resolve order number key
               const api3OrderNumKey = mapping3?.mappings['orderNumber'];
-              const api3OrderNum = api3OrderNumKey && api3Item[api3OrderNumKey] !== undefined
-                ? api3Item[api3OrderNumKey]
-                : (api3Item.orderNumber || api3Item.order_number || api3Item.numero_pedido || api3Item.numero || api3Item.id_pedido || api3Item.pedido || api3Item.id || api3Item.code);
+              const api3OrderNum = api3OrderNumKey !== undefined
+                ? resolveMappedValue(api3Item, api3OrderNumKey)
+                : undefined;
+              const finalApi3OrderNum = api3OrderNum !== undefined
+                ? api3OrderNum
+                : (getFieldVal(api3Item, 'orderNumber') || getFieldVal(api3Item, 'order_number') || getFieldVal(api3Item, 'numero_pedido') || getFieldVal(api3Item, 'numero') || getFieldVal(api3Item, 'id_pedido') || getFieldVal(api3Item, 'pedvenda') || getFieldVal(api3Item, 'pedido') || getFieldVal(api3Item, 'id') || getFieldVal(api3Item, 'code'));
 
-              const isSameOrder = String(api3OrderNum || '').trim().toUpperCase() === String(orderNumberRaw).trim().toUpperCase();
+              const isSameOrder = String(finalApi3OrderNum || '').trim().toUpperCase() === String(orderNumberRaw).trim().toUpperCase();
 
               if (isSameOrder) {
                 // Resolve product code
                 const api3ProdCodeKey = mapping3?.mappings['itemProductCode'] || mapping3?.mappings['productCode'];
-                const api3ProdCode = api3ProdCodeKey && api3Item[api3ProdCodeKey] !== undefined
-                  ? api3Item[api3ProdCodeKey]
-                  : (api3Item.productCode || api3Item.sku || api3Item.code || api3Item.pr_cod || api3Item.codigo || api3Item.cod || api3Item.cod_produto || api3Item.product_code || api3Item.productId);
+                let api3ProdCode = api3ProdCodeKey !== undefined ? resolveMappedValue(api3Item, api3ProdCodeKey) : undefined;
+                if (!api3ProdCode || String(api3ProdCode).trim() === '') {
+                  api3ProdCode = getFieldVal(api3Item, 'i_codprod') ||
+                    getFieldVal(api3Item, 'i_modelo') ||
+                    getFieldVal(api3Item, 'productCode') ||
+                    getFieldVal(api3Item, 'sku') ||
+                    getFieldVal(api3Item, 'code') ||
+                    getFieldVal(api3Item, 'pr_cod') ||
+                    getFieldVal(api3Item, 'codigo') ||
+                    getFieldVal(api3Item, 'cod') ||
+                    getFieldVal(api3Item, 'cod_produto') ||
+                    getFieldVal(api3Item, 'product_code') ||
+                    getFieldVal(api3Item, 'productId');
+                }
 
                 if (!api3ProdCode) {
                   addLog(`AVISO API 3: Item na linha #${api3Idx + 1} para o pedido "${orderNumberRaw}" não possui código de produto válido.`);
@@ -624,33 +740,29 @@ export default function OrdersTable({
                   return matchCode || matchPrCod || matchCodigo;
                 });
 
-                if (!matchedProd3) {
-                  orderRejected = true;
-                  rejectReason = `Produto com código "${api3ProdCode}" retornado pela API 3 não existe no cadastro do sistema.`;
-                  return;
-                }
+                const finalProdCode3 = matchedProd3 ? matchedProd3.code : String(api3ProdCode).trim();
+                const finalProdName3 = matchedProd3 ? matchedProd3.name : String(getFieldVal(api3Item, 'i_nomeprod') || getFieldVal(api3Item, 'productName') || getFieldVal(api3Item, 'name') || getFieldVal(api3Item, 'descricao') || api3ProdCode).trim();
 
                 // Quantity
                 const api3QtyKey = mapping3?.mappings['itemQuantity'] || mapping3?.mappings['quantity'];
-                const api3QtyRaw = api3QtyKey && api3Item[api3QtyKey] !== undefined
-                  ? api3Item[api3QtyKey]
-                  : (api3Item.quantityOrdered || api3Item.quantity || api3Item.quantidade || api3Item.qtd || api3Item.qty);
-                const quantityOrdered3 = Number(api3QtyRaw !== undefined ? api3QtyRaw : 1);
+                const api3QtyRaw = api3QtyKey !== undefined ? resolveMappedValue(api3Item, api3QtyKey) : undefined;
+                const finalApi3QtyRaw = api3QtyRaw !== undefined
+                  ? api3QtyRaw
+                  : (getFieldVal(api3Item, 'i_qtdade') || getFieldVal(api3Item, 'quantityOrdered') || getFieldVal(api3Item, 'quantity') || getFieldVal(api3Item, 'quantidade') || getFieldVal(api3Item, 'qtd') || getFieldVal(api3Item, 'qty') || 1);
+                const quantityOrdered3 = Number(finalApi3QtyRaw !== undefined ? finalApi3QtyRaw : 1);
 
                 // Price
                 const api3PriceKey = mapping3?.mappings['itemUnitPrice'] || mapping3?.mappings['unitPrice'] || mapping3?.mappings['price'];
-                const api3PriceRaw = (api3PriceKey !== undefined)
-                  ? resolveMappedValue(api3Item, api3PriceKey)
-                  : undefined;
+                const api3PriceRaw = api3PriceKey !== undefined ? resolveMappedValue(api3Item, api3PriceKey) : undefined;
                 const finalApi3PriceRaw = api3PriceRaw !== undefined
                   ? api3PriceRaw
-                  : (api3Item.unitPrice || api3Item.price || api3Item.preco || api3Item.valor || api3Item.valor_unitario);
-                const unitPrice3 = finalApi3PriceRaw !== undefined ? parseWebhookMonetary(finalApi3PriceRaw) : ((matchedProd3 as any).pr_preco || 0);
+                  : (getFieldVal(api3Item, 'i_preco') || getFieldVal(api3Item, 'unitPrice') || getFieldVal(api3Item, 'price') || getFieldVal(api3Item, 'preco') || getFieldVal(api3Item, 'valor') || getFieldVal(api3Item, 'valor_unitario'));
+                const unitPrice3 = finalApi3PriceRaw !== undefined ? parseWebhookMonetary(finalApi3PriceRaw) : (matchedProd3 ? ((matchedProd3 as any).pr_preco || 0) : 0);
 
                 compiledOrderItems.push({
                   id: `itm-${Date.now()}-api3-${api3Idx}-${Math.floor(Math.random() * 1000)}`,
-                  productCode: matchedProd3.code,
-                  productName: matchedProd3.name,
+                  productCode: finalProdCode3,
+                  productName: finalProdName3,
                   quantityOrdered: quantityOrdered3,
                   unitPrice: unitPrice3
                 });
@@ -1182,9 +1294,10 @@ export default function OrdersTable({
                         {/* Priority Badge */}
                         <td className="px-6 py-4 text-center">
                           {(() => {
-                            const badgeCfg = getPriorityBadgeClasses(order.priority);
                             const evalInfo = orderEvaluations.get(order.id || order.orderNumber);
-                            const tooltip = evalInfo?.summary || `Prioridade: ${order.priority}`;
+                            const effectivePriority = evalInfo?.priority || order.priority;
+                            const badgeCfg = getPriorityBadgeClasses(effectivePriority);
+                            const tooltip = evalInfo?.summary || `Prioridade: ${effectivePriority}`;
                             return (
                               <span 
                                 title={tooltip}

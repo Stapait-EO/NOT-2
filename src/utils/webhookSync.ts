@@ -1,5 +1,6 @@
 import { WebhookConfig, FieldMapping, Product, OrderHeader, OrderItem, StockBalance, Warehouse, SaleRecord } from '../types';
 import { executeProxyWebhook } from './proxyWebhook';
+import { calculateOrderPriority } from './orderPriority';
 
 export interface SyncResult<T> {
   success: boolean;
@@ -115,6 +116,20 @@ export function parseWebhookDate(rawDate: any): string {
 }
 
 /**
+ * Helper to get property case-insensitively from an object.
+ */
+export function getFieldVal(item: any, key: string | undefined): any {
+  if (!item || typeof item !== 'object' || !key) return undefined;
+  if (item[key] !== undefined) return item[key];
+  const trimmed = String(key).trim();
+  if (item[trimmed] !== undefined) return item[trimmed];
+  const lowerKey = trimmed.toLowerCase();
+  const directKey = Object.keys(item).find(k => k.trim().toLowerCase() === lowerKey);
+  if (directKey && item[directKey] !== undefined) return item[directKey];
+  return undefined;
+}
+
+/**
  * Resolves mapped field values, supporting simple key lookups and basic math expressions.
  */
 export function resolveMappedValue(item: any, mappingKey: string | undefined): any {
@@ -124,7 +139,7 @@ export function resolveMappedValue(item: any, mappingKey: string | undefined): a
 
   const hasOperators = /[\+\-\*\/\(\)]/.test(trimmedKey);
   if (!hasOperators) {
-    return item[trimmedKey];
+    return getFieldVal(item, trimmedKey);
   }
 
   try {
@@ -138,7 +153,7 @@ export function resolveMappedValue(item: any, mappingKey: string | undefined): a
     }
 
     variablesFound.forEach(varName => {
-      const val = item[varName];
+      const val = getFieldVal(item, varName);
       const numericVal = (val !== undefined && val !== null) ? parseWebhookMonetary(val) : 0;
       const safeVarName = varName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
       const regex = new RegExp('\\b' + safeVarName + '\\b', 'g');
@@ -374,7 +389,9 @@ export async function syncOrdersWebhook(
   webhook: WebhookConfig,
   allWebhooks: WebhookConfig[],
   fieldMappings: FieldMapping[],
-  products: Product[]
+  products: Product[],
+  stock?: StockBalance[],
+  warehouses?: Warehouse[]
 ): Promise<SyncResult<Omit<OrderHeader, 'id'>[]>> {
   const logs: string[] = [];
   const addLog = (m: string) => logs.push(`[${new Date().toLocaleTimeString('pt-BR')}] ${m}`);
@@ -487,18 +504,57 @@ export async function syncOrdersWebhook(
       const headerFields = ['orderNumber', 'clientName', 'date', 'priority', 'notes', 'items'];
       headerFields.forEach(sysKey => {
         const webhookKey = mapping?.mappings[sysKey];
-        if (webhookKey && webhookItem[webhookKey] !== undefined) {
-          mappedHeader[sysKey] = webhookItem[webhookKey];
-        } else if (webhookItem[sysKey] !== undefined) {
-          mappedHeader[sysKey] = webhookItem[sysKey];
+        if (webhookKey) {
+          const mappedVal = resolveMappedValue(webhookItem, webhookKey);
+          if (mappedVal !== undefined) {
+            mappedHeader[sysKey] = mappedVal;
+          }
+        }
+        if (mappedHeader[sysKey] === undefined) {
+          mappedHeader[sysKey] = getFieldVal(webhookItem, sysKey);
         }
       });
 
-      const orderNumberRaw = mappedHeader.orderNumber || webhookItem.orderNumber || webhookItem.order_number || webhookItem.numero || webhookItem.numero_pedido || webhookItem.id || webhookItem.pedido;
-      const clientNameRaw = mappedHeader.clientName || webhookItem.clientName || webhookItem.client || webhookItem.cliente || webhookItem.customer;
-      const dateRaw = mappedHeader.date || webhookItem.date || webhookItem.data || webhookItem.data_pedido || webhookItem.emissao;
-      const priorityRaw = mappedHeader.priority || webhookItem.priority || webhookItem.prioridade || 'Média';
-      const notesRaw = mappedHeader.notes || webhookItem.notes || webhookItem.observacoes || '';
+      const orderNumberRaw = mappedHeader.orderNumber || 
+        getFieldVal(webhookItem, 'orderNumber') || 
+        getFieldVal(webhookItem, 'order_number') || 
+        getFieldVal(webhookItem, 'numero') || 
+        getFieldVal(webhookItem, 'numero_pedido') || 
+        getFieldVal(webhookItem, 'pedvenda') || 
+        getFieldVal(webhookItem, 'id') || 
+        getFieldVal(webhookItem, 'code') || 
+        getFieldVal(webhookItem, 'pedido');
+
+      const clientNameRaw = mappedHeader.clientName || 
+        getFieldVal(webhookItem, 'clientName') || 
+        getFieldVal(webhookItem, 'client') || 
+        getFieldVal(webhookItem, 'cliente') || 
+        getFieldVal(webhookItem, 'nome_clien') || 
+        getFieldVal(webhookItem, 'nome_cli2') || 
+        getFieldVal(webhookItem, 'nome_cliente') || 
+        getFieldVal(webhookItem, 'customer') ||
+        getFieldVal(webhookItem, 'codcliente');
+
+      const dateRaw = mappedHeader.date || 
+        getFieldVal(webhookItem, 'date') || 
+        getFieldVal(webhookItem, 'data_ped') || 
+        getFieldVal(webhookItem, 'dt_entrega') || 
+        getFieldVal(webhookItem, 'data') || 
+        getFieldVal(webhookItem, 'data_pedido') || 
+        getFieldVal(webhookItem, 'created_at') || 
+        getFieldVal(webhookItem, 'emissao');
+
+      const priorityRaw = mappedHeader.priority || 
+        getFieldVal(webhookItem, 'priority') || 
+        getFieldVal(webhookItem, 'prioridade') || 
+        'Média';
+
+      const notesRaw = mappedHeader.notes || 
+        getFieldVal(webhookItem, 'notes') || 
+        getFieldVal(webhookItem, 'observacoes') || 
+        getFieldVal(webhookItem, 'obs') || 
+        getFieldVal(webhookItem, 'ped_client') || 
+        '';
 
       if (!orderNumberRaw || !clientNameRaw) {
         rejectedItems.push({ item: webhookItem, reason: `Pedido #${index + 1}: Número de pedido ou cliente ausente` });
@@ -515,12 +571,17 @@ export async function syncOrdersWebhook(
       let rawItemsList: any[] = [];
       const possibleItemsKeys = ['items', 'itens', 'orderItems', 'produtos', 'lines', 'line_items'];
       const mappedItemsKey = mapping?.mappings['items'];
-      if (mappedItemsKey && Array.isArray(webhookItem[mappedItemsKey])) {
-        rawItemsList = webhookItem[mappedItemsKey];
-      } else {
+      if (mappedItemsKey) {
+        const mappedVal = getFieldVal(webhookItem, mappedItemsKey);
+        if (Array.isArray(mappedVal)) {
+          rawItemsList = mappedVal;
+        }
+      }
+      if (rawItemsList.length === 0) {
         for (const key of possibleItemsKeys) {
-          if (Array.isArray(webhookItem[key])) {
-            rawItemsList = webhookItem[key];
+          const val = getFieldVal(webhookItem, key);
+          if (Array.isArray(val)) {
+            rawItemsList = val;
             break;
           }
         }
@@ -535,12 +596,28 @@ export async function syncOrdersWebhook(
       for (let itemIdx = 0; itemIdx < rawItemsList.length; itemIdx++) {
         const rawItem = rawItemsList[itemIdx];
         const mappedProdCodeKey = mapping?.mappings['itemProductCode'];
-        const itemProdCode = mappedProdCodeKey && rawItem[mappedProdCodeKey] !== undefined
-          ? rawItem[mappedProdCodeKey]
-          : (rawItem.productCode || rawItem.sku || rawItem.code || rawItem.pr_cod || rawItem.codigo || rawItem.cod || rawItem.productId);
+        let itemProdCode = mappedProdCodeKey ? resolveMappedValue(rawItem, mappedProdCodeKey) : undefined;
+        if (!itemProdCode || String(itemProdCode).trim() === '') {
+          itemProdCode = getFieldVal(rawItem, 'i_codprod') ||
+            getFieldVal(rawItem, 'i_modelo') ||
+            getFieldVal(rawItem, 'productCode') ||
+            getFieldVal(rawItem, 'sku') ||
+            getFieldVal(rawItem, 'code') ||
+            getFieldVal(rawItem, 'pr_cod') ||
+            getFieldVal(rawItem, 'codigo') ||
+            getFieldVal(rawItem, 'cod') ||
+            getFieldVal(rawItem, 'productId');
+        }
 
-        const rawNameKey = mapping?.mappings['itemName'] || 'productName';
-        const itemNameRaw = rawItem[rawNameKey] || rawItem.productName || rawItem.name || rawItem.descricao || '';
+        const rawNameKey = mapping?.mappings['itemName'];
+        let itemNameRaw = rawNameKey ? resolveMappedValue(rawItem, rawNameKey) : undefined;
+        if (!itemNameRaw || String(itemNameRaw).trim() === '') {
+          itemNameRaw = getFieldVal(rawItem, 'i_nomeprod') ||
+            getFieldVal(rawItem, 'productName') ||
+            getFieldVal(rawItem, 'name') ||
+            getFieldVal(rawItem, 'descricao') ||
+            '';
+        }
 
         const isSistema = String(itemProdCode || '').trim().toUpperCase() === 'SISTEMA' ||
                           String(itemNameRaw || '').trim().toUpperCase() === 'SISTEMA';
@@ -550,39 +627,39 @@ export async function syncOrdersWebhook(
           continue;
         }
 
-        if (!itemProdCode) {
+        if (!itemProdCode || String(itemProdCode).trim() === '') {
           orderRejected = true;
           rejectReason = `Código de produto ausente na linha #${itemIdx + 1} do pedido ${orderNumberRaw}`;
           break;
         }
 
         const codeStr = String(itemProdCode).trim().toLowerCase();
+        const nameStr = String(itemNameRaw || '').trim().toLowerCase();
         const matchedProd = products.find(p => {
-          const matchCode = String(p.code).trim().toLowerCase() === codeStr;
+          const matchCode = String(p.code || '').trim().toLowerCase() === codeStr;
           const matchPrCod = p.pr_cod !== undefined && String(p.pr_cod).trim().toLowerCase() === codeStr;
           const matchCodigo = p.codigo !== undefined && String(p.codigo).trim().toLowerCase() === codeStr;
-          return matchCode || matchPrCod || matchCodigo;
+          const matchName = nameStr && String(p.name || '').trim().toLowerCase() === nameStr;
+          return matchCode || matchPrCod || matchCodigo || matchName;
         });
 
-        if (!matchedProd) {
-          orderRejected = true;
-          rejectReason = `Produto "${itemProdCode}" não existe no cadastro`;
-          break;
-        }
+        const finalProdCode = matchedProd ? matchedProd.code : String(itemProdCode).trim();
+        const finalProdName = matchedProd ? matchedProd.name : String(itemNameRaw || itemProdCode).trim();
 
-        const rawQtyKey = mapping?.mappings['itemQuantity'] || 'quantityOrdered';
-        const rawQty = rawItem[rawQtyKey] !== undefined ? rawItem[rawQtyKey] : (rawItem.quantityOrdered || rawItem.quantity || rawItem.quantidade || rawItem.qtd);
-        const quantityOrdered = Number(rawQty !== undefined ? rawQty : 1);
+        const rawQtyKey = mapping?.mappings['itemQuantity'];
+        const qtyRaw = rawQtyKey !== undefined ? resolveMappedValue(rawItem, rawQtyKey) : undefined;
+        const finalQtyRaw = qtyRaw !== undefined ? qtyRaw : (getFieldVal(rawItem, 'i_qtdade') || getFieldVal(rawItem, 'quantityOrdered') || getFieldVal(rawItem, 'quantity') || getFieldVal(rawItem, 'quantidade') || getFieldVal(rawItem, 'qtd') || 1);
+        const quantityOrdered = Number(finalQtyRaw !== undefined ? finalQtyRaw : 1);
 
-        const rawPriceKey = mapping?.mappings['itemUnitPrice'] || 'unitPrice';
-        const mappedPrice = rawItem[rawPriceKey] !== undefined ? resolveMappedValue(rawItem, rawPriceKey) : undefined;
-        const finalPriceRaw = mappedPrice !== undefined ? mappedPrice : (rawItem.unitPrice || rawItem.price || rawItem.preco || rawItem.valor);
-        const unitPrice = finalPriceRaw !== undefined ? parseWebhookMonetary(finalPriceRaw) : ((matchedProd as any).pr_preco || 0);
+        const rawPriceKey = mapping?.mappings['itemUnitPrice'];
+        const mappedPrice = rawPriceKey !== undefined ? resolveMappedValue(rawItem, rawPriceKey) : undefined;
+        const finalPriceRaw = mappedPrice !== undefined ? mappedPrice : (getFieldVal(rawItem, 'i_preco') || getFieldVal(rawItem, 'unitPrice') || getFieldVal(rawItem, 'price') || getFieldVal(rawItem, 'preco') || getFieldVal(rawItem, 'valor'));
+        const unitPrice = finalPriceRaw !== undefined ? parseWebhookMonetary(finalPriceRaw) : (matchedProd ? ((matchedProd as any).pr_preco || 0) : 0);
 
         compiledOrderItems.push({
           id: `itm-${Date.now()}-${itemIdx}-${Math.floor(Math.random() * 1000)}`,
-          productCode: matchedProd.code,
-          productName: matchedProd.name,
+          productCode: finalProdCode,
+          productName: finalProdName,
           quantityOrdered,
           unitPrice
         });
@@ -591,42 +668,45 @@ export async function syncOrdersWebhook(
       if (hasSistemaItem && !orderRejected && api3ItemsArray.length > 0) {
         api3ItemsArray.forEach((api3Item, api3Idx) => {
           const api3OrderNumKey = mapping3?.mappings['orderNumber'];
-          const api3OrderNum = api3OrderNumKey && api3Item[api3OrderNumKey] !== undefined
-            ? api3Item[api3OrderNumKey]
-            : (api3Item.orderNumber || api3Item.order_number || api3Item.numero_pedido || api3Item.numero || api3Item.pedido);
+          const api3OrderNum = api3OrderNumKey !== undefined ? resolveMappedValue(api3Item, api3OrderNumKey) : undefined;
+          const finalApi3OrderNum = api3OrderNum !== undefined ? api3OrderNum : (getFieldVal(api3Item, 'orderNumber') || getFieldVal(api3Item, 'order_number') || getFieldVal(api3Item, 'numero_pedido') || getFieldVal(api3Item, 'numero') || getFieldVal(api3Item, 'pedvenda') || getFieldVal(api3Item, 'pedido'));
 
-          if (String(api3OrderNum || '').trim().toUpperCase() === String(orderNumberRaw).trim().toUpperCase()) {
+          if (String(finalApi3OrderNum || '').trim().toUpperCase() === String(orderNumberRaw).trim().toUpperCase()) {
             const api3ProdCodeKey = mapping3?.mappings['itemProductCode'] || mapping3?.mappings['productCode'];
-            const api3ProdCode = api3ProdCodeKey && api3Item[api3ProdCodeKey] !== undefined
-              ? api3Item[api3ProdCodeKey]
-              : (api3Item.productCode || api3Item.sku || api3Item.code || api3Item.pr_cod || api3Item.codigo);
+            let api3ProdCode = api3ProdCodeKey !== undefined ? resolveMappedValue(api3Item, api3ProdCodeKey) : undefined;
+            if (!api3ProdCode || String(api3ProdCode).trim() === '') {
+              api3ProdCode = getFieldVal(api3Item, 'i_codprod') || getFieldVal(api3Item, 'i_modelo') || getFieldVal(api3Item, 'productCode') || getFieldVal(api3Item, 'sku') || getFieldVal(api3Item, 'code') || getFieldVal(api3Item, 'pr_cod') || getFieldVal(api3Item, 'codigo');
+            }
 
             if (api3ProdCode) {
               const codeStr3 = String(api3ProdCode).trim().toLowerCase();
               const matchedProd3 = products.find(p => {
-                const matchCode = String(p.code).trim().toLowerCase() === codeStr3;
+                const matchCode = String(p.code || '').trim().toLowerCase() === codeStr3;
                 const matchPrCod = p.pr_cod !== undefined && String(p.pr_cod).trim().toLowerCase() === codeStr3;
                 const matchCodigo = p.codigo !== undefined && String(p.codigo).trim().toLowerCase() === codeStr3;
                 return matchCode || matchPrCod || matchCodigo;
               });
 
-              if (matchedProd3) {
-                const api3QtyKey = mapping3?.mappings['itemQuantity'] || 'quantity';
-                const api3Qty = api3Item[api3QtyKey] !== undefined ? api3Item[api3QtyKey] : (api3Item.quantityOrdered || api3Item.quantity || api3Item.quantidade);
-                const quantityOrdered3 = Number(api3Qty !== undefined ? api3Qty : 1);
+              const finalProdCode3 = matchedProd3 ? matchedProd3.code : String(api3ProdCode).trim();
+              const finalProdName3 = matchedProd3 ? matchedProd3.name : String(getFieldVal(api3Item, 'i_nomeprod') || getFieldVal(api3Item, 'productName') || getFieldVal(api3Item, 'name') || getFieldVal(api3Item, 'descricao') || api3ProdCode).trim();
 
-                const api3PriceKey = mapping3?.mappings['itemUnitPrice'] || 'unitPrice';
-                const api3PriceRaw = api3PriceKey && api3Item[api3PriceKey] !== undefined ? resolveMappedValue(api3Item, api3PriceKey) : (api3Item.unitPrice || api3Item.price || api3Item.preco);
-                const unitPrice3 = api3PriceRaw !== undefined ? parseWebhookMonetary(api3PriceRaw) : ((matchedProd3 as any).pr_preco || 0);
+              const api3QtyKey = mapping3?.mappings['itemQuantity'] || mapping3?.mappings['quantity'];
+              const api3QtyRaw = api3QtyKey !== undefined ? resolveMappedValue(api3Item, api3QtyKey) : undefined;
+              const finalApi3QtyRaw = api3QtyRaw !== undefined ? api3QtyRaw : (getFieldVal(api3Item, 'i_qtdade') || getFieldVal(api3Item, 'quantityOrdered') || getFieldVal(api3Item, 'quantity') || getFieldVal(api3Item, 'quantidade') || 1);
+              const quantityOrdered3 = Number(finalApi3QtyRaw !== undefined ? finalApi3QtyRaw : 1);
 
-                compiledOrderItems.push({
-                  id: `itm-${Date.now()}-api3-${api3Idx}-${Math.floor(Math.random() * 1000)}`,
-                  productCode: matchedProd3.code,
-                  productName: matchedProd3.name,
-                  quantityOrdered: quantityOrdered3,
-                  unitPrice: unitPrice3
-                });
-              }
+              const api3PriceKey = mapping3?.mappings['itemUnitPrice'] || mapping3?.mappings['unitPrice'] || mapping3?.mappings['price'];
+              const api3PriceRaw = api3PriceKey !== undefined ? resolveMappedValue(api3Item, api3PriceKey) : undefined;
+              const finalApi3PriceRaw = api3PriceRaw !== undefined ? api3PriceRaw : (getFieldVal(api3Item, 'i_preco') || getFieldVal(api3Item, 'unitPrice') || getFieldVal(api3Item, 'price') || getFieldVal(api3Item, 'preco'));
+              const unitPrice3 = finalApi3PriceRaw !== undefined ? parseWebhookMonetary(finalApi3PriceRaw) : (matchedProd3 ? ((matchedProd3 as any).pr_preco || 0) : 0);
+
+              compiledOrderItems.push({
+                id: `itm-${Date.now()}-api3-${api3Idx}-${Math.floor(Math.random() * 1000)}`,
+                productCode: finalProdCode3,
+                productName: finalProdName3,
+                quantityOrdered: quantityOrdered3,
+                unitPrice: unitPrice3
+              });
             }
           }
         });
@@ -651,6 +731,14 @@ export async function syncOrdersWebhook(
         });
       }
     });
+
+    if (stock && stock.length > 0 && warehouses && warehouses.length > 0) {
+      addLog('Calculando prioridade dinâmica com base no estoque em São Paulo e Miami...');
+      validImportedItems.forEach(order => {
+        const prioEval = calculateOrderPriority(order.items, stock, warehouses, products);
+        order.priority = prioEval.priority;
+      });
+    }
 
     addLog(`Sincronização de pedidos concluída: ${validImportedItems.length} pedidos gravados.`);
 
@@ -1058,6 +1146,7 @@ export async function executeAutomaticWebhooks({
   fieldMappings,
   currentProducts,
   currentWarehouses,
+  currentStock = [],
   onImportProducts,
   onImportOrders,
   onImportStock,
@@ -1068,6 +1157,7 @@ export async function executeAutomaticWebhooks({
   fieldMappings: FieldMapping[];
   currentProducts: Product[];
   currentWarehouses: Warehouse[];
+  currentStock?: StockBalance[];
   onImportProducts: (products: Product[], overwrite?: boolean) => void;
   onImportOrders: (orders: Omit<OrderHeader, 'id'>[], overwrite?: boolean) => void;
   onImportStock: (stock: Omit<StockBalance, 'id'>[], overwrite?: boolean) => void;
@@ -1108,6 +1198,7 @@ export async function executeAutomaticWebhooks({
 
   let activeProducts = [...currentProducts];
   let activeWarehouses = [...currentWarehouses];
+  let activeStock = [...currentStock];
 
   for (const wh of sortedWebhooks) {
     const target = getWebhookTargetScreen(wh);
@@ -1139,7 +1230,7 @@ export async function executeAutomaticWebhooks({
           });
         }
       } else if (target === 'orders') {
-        const res = await syncOrdersWebhook(wh, webhooks, fieldMappings, activeProducts);
+        const res = await syncOrdersWebhook(wh, webhooks, fieldMappings, activeProducts, activeStock, activeWarehouses);
         if (res.success && res.data) {
           onImportOrders(res.data, true);
           summary.successfulCount++;
@@ -1168,6 +1259,7 @@ export async function executeAutomaticWebhooks({
             activeWarehouses = [...activeWarehouses, ...res.newWarehouses];
             onUpdateWarehouses(activeWarehouses);
           }
+          activeStock = res.data as any;
           onImportStock(res.data, true);
           summary.successfulCount++;
           summary.results.push({

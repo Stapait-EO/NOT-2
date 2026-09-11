@@ -697,6 +697,7 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
         fieldMappings: latestDataRef.current.fieldMappings,
         currentProducts: latestDataRef.current.products,
         currentWarehouses: latestDataRef.current.warehouses,
+        currentStock: latestDataRef.current.stock,
         onImportProducts: (imported, overwrite) => handleImportProducts(imported, overwrite),
         onImportOrders: (imported, overwrite) => handleImportOrders(imported, overwrite),
         onImportStock: (imported, overwrite) => handleImportStock(imported, overwrite),
