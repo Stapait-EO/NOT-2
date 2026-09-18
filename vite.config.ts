@@ -18,16 +18,12 @@ export default defineConfig(() => {
         output: {
           manualChunks(id) {
             if (id.includes('node_modules')) {
-              if (id.includes('xlsx') || id.includes('jszip')) {
-                return 'vendor-sheets';
-              }
-              if (id.includes('react') || id.includes('react-dom') || id.includes('motion')) {
-                return 'vendor-react';
+              if (id.includes('exceljs') || id.includes('xlsx') || id.includes('jszip')) {
+                return 'vendor-excel';
               }
               if (id.includes('lucide-react')) {
                 return 'vendor-icons';
               }
-              return 'vendor-core';
             }
           }
         }
