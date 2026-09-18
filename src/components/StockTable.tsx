@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, FormEvent } from 'react';
+import { useState, useMemo, useEffect, useCallback, FormEvent, Fragment } from 'react';
 import { 
   Plus, 
   Search, 
@@ -26,12 +26,14 @@ import {
   ArrowUpRight,
   Calendar,
   User,
-  ExternalLink
+  ExternalLink,
+  FileSpreadsheet
 } from 'lucide-react';
 import { StockBalance, Product, UserRole, WebhookConfig, FieldMapping, Warehouse, OrderHeader } from '../types';
 import { INITIAL_WAREHOUSES } from '../data';
 import { executeProxyWebhook } from '../utils/proxyWebhook';
 import { getPriorityBadgeClasses } from '../utils/orderPriority';
+import { exportStockToExcel } from '../utils/exportStockExcel';
 
 interface StockTableProps {
   stock: StockBalance[];
@@ -928,6 +930,31 @@ export default function StockTable({
     return totals;
   }, [activeGroups, groupedStock]);
 
+  // Exportar dados filtrados da grid para Excel
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleExportExcel = async () => {
+    try {
+      setIsExporting(true);
+      await exportStockToExcel({
+        viewMode,
+        groupedStock,
+        filteredStock,
+        displayedGroups,
+        groupTotals,
+        getProductOrdersSummary,
+        selectedWarehouseFilter,
+        searchTerm,
+        products,
+        getWarehouseGroup
+      });
+    } catch (err) {
+      console.error('Erro ao exportar estoque para Excel:', err);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   // Batch Breakdown Modal ("Saldo por Lote") State & Calculations
   const [batchModalData, setBatchModalData] = useState<{
     isOpen: boolean;
@@ -1630,6 +1657,35 @@ export default function StockTable({
               )}
             </button>
 
+            {/* Botão Exporta visível para todos os usuários */}
+            <button
+              id="btn-export-stock-excel"
+              onClick={handleExportExcel}
+              disabled={isExporting || (viewMode === 'consolidated' ? groupedStock.length === 0 : filteredStock.length === 0)}
+              className={`flex items-center justify-center gap-2 border border-slate-300 hover:bg-slate-50 text-slate-700 px-3.5 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer shadow-2xs hover:border-slate-400 ${
+                (viewMode === 'consolidated' ? groupedStock.length === 0 : filteredStock.length === 0)
+                  ? 'opacity-50 cursor-not-allowed'
+                  : ''
+              }`}
+              title={
+                selectedWarehouseFilter !== 'Todos'
+                  ? `Exportar para Excel (.xlsx) exatamente os dados filtrados do grupo "${selectedWarehouseFilter}"`
+                  : 'Exportar para Excel (.xlsx) exatamente os dados filtrados na grid'
+              }
+            >
+              {isExporting ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin text-emerald-600" />
+                  <span>Exportando...</span>
+                </>
+              ) : (
+                <>
+                  <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+                  <span>Exporta</span>
+                </>
+              )}
+            </button>
+
             {isMasterOrAdmin && stock.length > 0 && (
               <button
                 id="btn-clear-all-stock"
@@ -1702,9 +1758,13 @@ export default function StockTable({
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase bg-slate-50">
-                  <th className="px-6 py-3.5 whitespace-nowrap min-w-[120px]">Código (SKU)</th>
-                  <th className="px-6 py-3.5 min-w-[200px]">Produto</th>
-                  <th className="px-4 py-2 border-l border-slate-200 bg-amber-50/60 text-center min-w-[150px]">
+                  <th rowSpan={2} className="px-6 py-3.5 whitespace-nowrap min-w-[130px] border-b border-slate-200 align-middle">
+                    Código (SKU)
+                  </th>
+                  <th rowSpan={2} className="px-6 py-3.5 min-w-[200px] border-b border-slate-200 align-middle">
+                    Produto
+                  </th>
+                  <th rowSpan={2} className="px-4 py-2 border-l border-b border-slate-200 bg-amber-50/60 text-center min-w-[140px] whitespace-nowrap align-middle">
                     <span className="text-xs font-bold text-amber-950 block border-b border-amber-200 pb-1 mb-1">
                       Pedidos em Aberto
                     </span>
@@ -1714,19 +1774,37 @@ export default function StockTable({
                     </div>
                   </th>
                   {displayedGroups.map(grp => (
-                    <th key={grp} colSpan={3} className="px-6 py-2 border-l border-slate-200 bg-indigo-50/10 text-center">
-                      <span className="text-xs font-bold text-indigo-900 block border-b border-indigo-100/60 pb-1 mb-1">
+                    <th 
+                      key={grp} 
+                      colSpan={3} 
+                      className="px-4 py-2.5 border-l border-b border-slate-200 bg-indigo-50/30 text-center min-w-[350px]"
+                    >
+                      <span className="text-xs font-bold text-indigo-950 block tracking-wide">
                         {grp} = {"$ " + (groupTotals[grp] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
-                      <div className="grid grid-cols-3 gap-2 text-[10px] text-slate-500 tracking-wider font-semibold">
-                        <span className="inline-flex items-center justify-center gap-1 text-indigo-800" title="Dê dois cliques no número da quantidade para detalhar por lote">
+                    </th>
+                  ))}
+                </tr>
+                {/* Linha 2 do cabeçalho: colunas específicas para cada grupo */}
+                <tr className="border-b border-slate-200 text-[10px] font-semibold text-slate-500 uppercase bg-slate-50/90">
+                  {displayedGroups.map(grp => (
+                    <Fragment key={grp}>
+                      <th 
+                        className="px-3 py-2 border-l border-slate-200 bg-indigo-50/15 text-center font-bold text-indigo-900 min-w-[110px] whitespace-nowrap"
+                        title="Dê dois cliques no número da quantidade para detalhar por lote"
+                      >
+                        <span className="inline-flex items-center justify-center gap-1">
                           Quantidade
                           <Layers className="h-2.5 w-2.5 text-indigo-500 shrink-0" />
                         </span>
-                        <span>Preço Unit Médio</span>
-                        <span>Vr Total Médio</span>
-                      </div>
-                    </th>
+                      </th>
+                      <th className="px-3 py-2 bg-indigo-50/15 text-right font-bold text-slate-600 min-w-[115px] whitespace-nowrap">
+                        Preço Unit Médio
+                      </th>
+                      <th className="px-3 py-2 bg-indigo-50/15 text-right font-bold text-slate-600 min-w-[125px] whitespace-nowrap">
+                        Vr Total Médio
+                      </th>
+                    </Fragment>
                   ))}
                 </tr>
               </thead>
@@ -1736,7 +1814,7 @@ export default function StockTable({
                   return (
                     <tr key={row.productCode} className="hover:bg-slate-50/50 transition-colors">
                       {/* Product Code */}
-                      <td className="px-6 py-4 font-mono text-xs font-bold text-indigo-600 align-middle">
+                      <td className="px-6 py-4 font-mono text-xs font-bold text-indigo-600 align-middle whitespace-nowrap">
                         <div className="flex flex-col items-start gap-1">
                           <span>{row.productCode}</span>
                           {row.correlations && row.correlations.length > 0 && (
@@ -1762,7 +1840,7 @@ export default function StockTable({
                       </td>
 
                       {/* Pedidos em Aberto (A Sair) */}
-                      <td className="px-4 py-3 border-l border-slate-200 align-middle text-center bg-amber-50/15">
+                      <td className="px-4 py-3 border-l border-slate-200 align-middle text-center bg-amber-50/15 whitespace-nowrap">
                         {ordersSummary.totalQtyOrdered > 0 ? (
                           <button
                             type="button"
@@ -1793,31 +1871,23 @@ export default function StockTable({
                         const hasQty = data.quantity > 0;
 
                         return (
-                          <td 
-                            key={grp} 
-                            colSpan={3} 
-                            onDoubleClick={() => {
-                              if (hasQty) {
-                                handleOpenBatchModal(row.productCode, row.productName, grp);
-                              }
-                            }}
-                            className={`px-6 py-4 border-l border-slate-150 align-middle transition-colors ${
-                              hasQty ? 'hover:bg-indigo-50/40' : ''
-                            }`}
-                          >
-                            <div className="grid grid-cols-3 gap-2 items-center text-center">
-                              {/* Quantity */}
+                          <Fragment key={grp}>
+                            {/* Quantity Cell */}
+                            <td 
+                              onDoubleClick={() => {
+                                if (hasQty) {
+                                  handleOpenBatchModal(row.productCode, row.productName, grp);
+                                }
+                              }}
+                              title={hasQty ? `Duplo clique para abrir o saldo por lote de ${row.productCode} em ${grp}` : undefined}
+                              className={`px-3 py-3.5 border-l border-slate-200 align-middle text-center whitespace-nowrap min-w-[110px] transition-colors ${
+                                hasQty ? 'hover:bg-indigo-50/40 cursor-pointer' : ''
+                              }`}
+                            >
                               <div 
-                                onDoubleClick={(e) => {
-                                  e.stopPropagation();
-                                  if (hasQty) {
-                                    handleOpenBatchModal(row.productCode, row.productName, grp);
-                                  }
-                                }}
-                                title={hasQty ? `Duplo clique para abrir o saldo por lote de ${row.productCode} em ${grp}` : undefined}
                                 className={`font-mono font-bold select-none transition-all inline-flex items-center justify-center gap-1 mx-auto py-1 px-2 rounded-md ${
                                   hasQty 
-                                    ? 'text-indigo-900 bg-indigo-50/70 hover:bg-indigo-100 hover:text-indigo-700 cursor-pointer border border-indigo-200/80 shadow-2xs group/qty active:scale-95' 
+                                    ? 'text-indigo-900 bg-indigo-50/70 hover:bg-indigo-100 hover:text-indigo-700 border border-indigo-200/80 shadow-2xs group/qty active:scale-95' 
                                     : 'text-slate-300'
                                 }`}
                               >
@@ -1831,26 +1901,46 @@ export default function StockTable({
                                   <span className="text-slate-300">0</span>
                                 )}
                               </div>
+                            </td>
 
-                              {/* Preço Unit médio */}
-                              <div className="font-mono text-xs font-semibold text-emerald-700">
-                                {data.quantity > 0 ? (
-                                  `$ ${avgPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                ) : (
-                                  <span className="text-slate-300">-</span>
-                                )}
-                              </div>
+                            {/* Preço Unit Médio Cell */}
+                            <td 
+                              onDoubleClick={() => {
+                                if (hasQty) {
+                                  handleOpenBatchModal(row.productCode, row.productName, grp);
+                                }
+                              }}
+                              title={hasQty ? `Duplo clique para abrir o saldo por lote de ${row.productCode} em ${grp}` : undefined}
+                              className={`px-3 py-3.5 align-middle text-right whitespace-nowrap min-w-[115px] font-mono text-xs font-semibold text-emerald-700 transition-colors ${
+                                hasQty ? 'hover:bg-indigo-50/40 cursor-pointer' : ''
+                              }`}
+                            >
+                              {data.quantity > 0 ? (
+                                `$ ${avgPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                              ) : (
+                                <span className="text-slate-300">-</span>
+                              )}
+                            </td>
 
-                              {/* Vr Total médio */}
-                              <div className="font-mono text-xs font-bold text-blue-700">
-                                {data.quantity > 0 ? (
-                                  `$ ${totalVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                ) : (
-                                  <span className="text-slate-300">-</span>
-                                )}
-                              </div>
-                            </div>
-                          </td>
+                            {/* Vr Total Médio Cell */}
+                            <td 
+                              onDoubleClick={() => {
+                                if (hasQty) {
+                                  handleOpenBatchModal(row.productCode, row.productName, grp);
+                                }
+                              }}
+                              title={hasQty ? `Duplo clique para abrir o saldo por lote de ${row.productCode} em ${grp}` : undefined}
+                              className={`px-3 py-3.5 align-middle text-right whitespace-nowrap min-w-[125px] font-mono text-xs font-bold text-blue-700 transition-colors ${
+                                hasQty ? 'hover:bg-indigo-50/40 cursor-pointer' : ''
+                              }`}
+                            >
+                              {data.quantity > 0 ? (
+                                `$ ${totalVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                              ) : (
+                                <span className="text-slate-300">-</span>
+                              )}
+                            </td>
+                          </Fragment>
                         );
                       })}
                     </tr>

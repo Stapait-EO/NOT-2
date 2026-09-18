@@ -1126,13 +1126,28 @@ export default function OrdersTable({
     return order.items.reduce((sum, item) => sum + item.quantityOrdered, 0);
   };
 
+  // Grand totals of open orders
+  const totalAllOrdersValue = useMemo(() => {
+    return orders.reduce((sum, ord) => sum + getOrderTotal(ord), 0);
+  }, [orders]);
+
+  const totalFilteredOrdersValue = useMemo(() => {
+    return filteredOrders.reduce((sum, ord) => sum + getOrderTotal(ord), 0);
+  }, [filteredOrders]);
+
+  const totalFilteredItemsCount = useMemo(() => {
+    return filteredOrders.reduce((sum, ord) => sum + getOrderTotalItemsCount(ord), 0);
+  }, [filteredOrders]);
+
+  const isFiltered = searchTerm.trim() !== '' || priorityFilter !== 'Todos';
+
   return (
     <div className="space-y-4">
-      {/* Search, filters & Add Order button */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex flex-col md:flex-row gap-3 flex-1">
+      {/* Search, filters, total tag & Add Order button */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+        <div className="flex flex-col sm:flex-row gap-3 flex-1 flex-wrap items-stretch sm:items-center">
           {/* Search bar */}
-          <div className="relative flex-1 max-w-md">
+          <div className="relative flex-1 min-w-[220px] max-w-md">
             <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <Search className="h-4 w-4 text-slate-400" />
             </span>
@@ -1147,8 +1162,8 @@ export default function OrdersTable({
 
           {/* Priority filter */}
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-slate-500 flex items-center gap-1">
-              Filtrar Prioridade:
+            <span className="text-xs font-semibold text-slate-500 flex items-center gap-1 shrink-0">
+              Prioridade:
             </span>
             <select
               value={priorityFilter}
@@ -1161,6 +1176,37 @@ export default function OrdersTable({
               <option value="Médio Baixo">Médio Baixo (Saldo Parcial - Amarelo)</option>
               <option value="Baixo">Baixo (Sem Estoque - Vermelho)</option>
             </select>
+          </div>
+
+          {/* Tag com a soma da coluna Valor Total */}
+          <div 
+            id="tag-total-pedidos-aberto"
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-950 shadow-2xs transition-all hover:bg-emerald-100/70"
+            title={isFiltered 
+              ? `Total Filtrado: $ ${totalFilteredOrdersValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} (${filteredOrders.length} pedidos) | Total Geral: $ ${totalAllOrdersValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} (${orders.length} pedidos)`
+              : `Soma da coluna Valor Total dos ${orders.length} pedidos em aberto`
+            }
+          >
+            <span className="p-1 bg-emerald-600 text-white rounded-md flex items-center justify-center shrink-0 shadow-2xs">
+              <DollarSign className="h-3.5 w-3.5" />
+            </span>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-xs font-semibold text-emerald-800">
+                {isFiltered ? 'Total Filtrado:' : 'Total em Aberto:'}
+              </span>
+              <span className="font-mono text-sm font-extrabold text-emerald-950">
+                $ {totalFilteredOrdersValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+            {isFiltered ? (
+              <span className="text-[10px] bg-emerald-200/80 text-emerald-900 font-bold px-1.5 py-0.5 rounded-sm">
+                de $ {totalAllOrdersValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </span>
+            ) : (
+              <span className="text-[11px] text-emerald-700 font-medium">
+                ({orders.length} {orders.length === 1 ? 'pedido' : 'pedidos'})
+              </span>
+            )}
           </div>
         </div>
 
@@ -1245,7 +1291,18 @@ export default function OrdersTable({
                   <th className="px-6 py-3.5">Emissão</th>
                   <th className="px-6 py-3.5 text-center">Prioridade</th>
                   <th className="px-6 py-3.5 text-center">Qtd Itens</th>
-                  <th className="px-6 py-3.5 text-right">Valor Total</th>
+                  <th className="px-6 py-3.5 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <span>Valor Total</span>
+                      <span 
+                        id="tag-coluna-valor-total"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-mono font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs tracking-normal normal-case"
+                        title="Soma de todos os pedidos em aberto visíveis nesta coluna"
+                      >
+                        $ {totalFilteredOrdersValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </th>
                   {canManageOrders && <th className="px-6 py-3.5 text-right">Ações</th>}
                 </tr>
               </thead>
@@ -1443,6 +1500,24 @@ export default function OrdersTable({
                   );
                 })}
               </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-slate-200 bg-slate-50/90 text-xs font-semibold text-slate-700">
+                  <td className="px-6 py-3.5"></td>
+                  <td colSpan={3} className="px-6 py-3.5 uppercase tracking-wider text-slate-500 font-bold">
+                    Soma Total ({filteredOrders.length} {filteredOrders.length === 1 ? 'pedido' : 'pedidos'} em aberto):
+                  </td>
+                  <td className="px-6 py-3.5 text-center text-slate-400 font-medium">
+                    —
+                  </td>
+                  <td className="px-6 py-3.5 text-center font-bold text-slate-700">
+                    {totalFilteredItemsCount} <span className="text-[10px] font-normal text-slate-400">un</span>
+                  </td>
+                  <td className="px-6 py-3.5 text-right font-mono font-black text-emerald-700 text-sm">
+                    $ {totalFilteredOrdersValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </td>
+                  {canManageOrders && <td className="px-6 py-3.5"></td>}
+                </tr>
+              </tfoot>
             </table>
           )}
         </div>
