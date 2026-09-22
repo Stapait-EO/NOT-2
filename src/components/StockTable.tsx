@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, FormEvent, Fragment } from 'react';
+import { useState, useMemo, useEffect, useCallback, FormEvent, Fragment, useRef, MouseEvent as ReactMouseEvent } from 'react';
 import { 
   Plus, 
   Search, 
@@ -27,7 +27,10 @@ import {
   Calendar,
   User,
   ExternalLink,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Monitor,
+  ChevronDown,
+  Filter
 } from 'lucide-react';
 import { StockBalance, Product, UserRole, WebhookConfig, FieldMapping, Warehouse, OrderHeader } from '../types';
 import { INITIAL_WAREHOUSES } from '../data';
@@ -75,7 +78,9 @@ export default function StockTable({
   const canManageStock = isMasterOrAdmin || roleLower === 'almoxarife';
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedWarehouseFilter, setSelectedWarehouseFilter] = useState('Todos');
+  const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
+  const [isGroupDropdownOpen, setIsGroupDropdownOpen] = useState(false);
+  const groupDropdownRef = useRef<HTMLDivElement>(null);
   const [filterOnlyWithOpenOrders, setFilterOnlyWithOpenOrders] = useState(false);
 
   // Webhook execution and import integration states
@@ -574,6 +579,87 @@ export default function StockTable({
   const [newWhGroup, setNewWhGroup] = useState('');
   const [whError, setWhError] = useState('');
 
+  // Mode: Ajustar ao Monitor (Altura vinculada à tela com cabeçalho fixo e rolagem horizontal sempre visível)
+  const [fitToScreen, setFitToScreen] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('stock_fit_to_screen');
+      return saved !== null ? saved === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const handleToggleFitToScreen = () => {
+    setFitToScreen(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('stock_fit_to_screen', String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+
+  // Flag: Estoque Projetado (Disponível = Saldo Físico - Pedidos em Aberto) vs Estoque Real (Físico)
+  const [showProjectedStock, setShowProjectedStock] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('stock_show_projected');
+      return saved !== null ? saved === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const handleToggleProjectedStock = () => {
+    setShowProjectedStock(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('stock_show_projected', String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+
+  // Synchronized horizontal scroll refs & state
+  const topScrollRef = useRef<HTMLDivElement>(null);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const [tableScrollWidth, setTableScrollWidth] = useState(0);
+  const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState(false);
+  const isSyncingScroll = useRef(false);
+
+  const checkOverflow = useCallback(() => {
+    if (tableContainerRef.current) {
+      const { scrollWidth, clientWidth } = tableContainerRef.current;
+      setTableScrollWidth(scrollWidth);
+      setHasHorizontalOverflow(scrollWidth > clientWidth + 2);
+    }
+  }, []);
+
+  const handleTopScroll = () => {
+    if (isSyncingScroll.current) return;
+    isSyncingScroll.current = true;
+    if (topScrollRef.current && tableContainerRef.current) {
+      tableContainerRef.current.scrollLeft = topScrollRef.current.scrollLeft;
+    }
+    requestAnimationFrame(() => {
+      isSyncingScroll.current = false;
+    });
+  };
+
+  const handleTableScroll = () => {
+    if (isSyncingScroll.current) return;
+    isSyncingScroll.current = true;
+    if (topScrollRef.current && tableContainerRef.current) {
+      topScrollRef.current.scrollLeft = tableContainerRef.current.scrollLeft;
+    }
+    requestAnimationFrame(() => {
+      isSyncingScroll.current = false;
+    });
+  };
+
   // Editing warehouses state
   const [editingWhId, setEditingWhId] = useState<string | null>(null);
   const [editingWhName, setEditingWhName] = useState('');
@@ -793,6 +879,68 @@ export default function StockTable({
     return Array.from(groups);
   }, [warehouses, stock, getWarehouseGroup]);
 
+  // Close group dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (groupDropdownRef.current && !groupDropdownRef.current.contains(event.target as Node)) {
+        setIsGroupDropdownOpen(false);
+      }
+    }
+    if (isGroupDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isGroupDropdownOpen]);
+
+  // Compatibility computed string for export, title notifications, and logging
+  const selectedWarehouseFilter = useMemo(() => {
+    if (selectedGroups.length === 0 || selectedGroups.length === activeGroups.length) {
+      return 'Todos';
+    }
+    if (selectedGroups.length === 1) {
+      return selectedGroups[0];
+    }
+    return selectedGroups.join(', ');
+  }, [selectedGroups, activeGroups]);
+
+  const isAllGroupsSelected = selectedGroups.length === 0 || selectedGroups.length === activeGroups.length;
+
+  const isGroupSelected = useCallback((grp: string) => {
+    if (isAllGroupsSelected) return true;
+    return selectedGroups.some(g => g.toLowerCase() === grp.toLowerCase());
+  }, [isAllGroupsSelected, selectedGroups]);
+
+  const handleToggleGroup = useCallback((grp: string) => {
+    if (isAllGroupsSelected) {
+      // All groups were selected: unchecking one group isolates all the remaining groups
+      setSelectedGroups(activeGroups.filter(g => g.toLowerCase() !== grp.toLowerCase()));
+    } else {
+      const exists = selectedGroups.some(g => g.toLowerCase() === grp.toLowerCase());
+      if (exists) {
+        const next = selectedGroups.filter(g => g.toLowerCase() !== grp.toLowerCase());
+        setSelectedGroups(next);
+      } else {
+        const next = [...selectedGroups, grp];
+        if (next.length === activeGroups.length) {
+          setSelectedGroups([]);
+        } else {
+          setSelectedGroups(next);
+        }
+      }
+    }
+  }, [isAllGroupsSelected, selectedGroups, activeGroups]);
+
+  const handleSelectOnlyGroup = useCallback((grp: string, e?: ReactMouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedGroups([grp]);
+  }, []);
+
+  const handleSelectAllGroups = useCallback(() => {
+    setSelectedGroups([]);
+  }, []);
+
   // Filtered Stock Balance list by search term, group, and open orders
   // Supports searching by parent SKU, child SKU, or product name
   const filteredStock = useMemo(() => {
@@ -820,8 +968,8 @@ export default function StockTable({
       
       const itemGroup = getWarehouseGroup(item.warehouse);
       const matchesWarehouseGroup = 
-        selectedWarehouseFilter === 'Todos' || 
-        itemGroup.toLowerCase() === selectedWarehouseFilter.toLowerCase();
+        selectedGroups.length === 0 || 
+        selectedGroups.some(g => g.toLowerCase() === itemGroup.toLowerCase());
 
       const ordersSummary = getProductOrdersSummary(effectiveParentCode);
       const matchesOpenOrders = 
@@ -830,16 +978,17 @@ export default function StockTable({
 
       return matchesSearch && matchesWarehouseGroup && matchesOpenOrders;
     });
-  }, [stock, searchTerm, selectedWarehouseFilter, filterOnlyWithOpenOrders, correlationMaps, products, getProductOrdersSummary, getWarehouseGroup]);
+  }, [stock, searchTerm, selectedGroups, filterOnlyWithOpenOrders, correlationMaps, products, getProductOrdersSummary, getWarehouseGroup]);
 
   // Groups to display as columns in the consolidated view
   const displayedGroups = useMemo(() => {
-    if (selectedWarehouseFilter !== 'Todos') {
-      const matched = activeGroups.filter(g => g.toLowerCase() === selectedWarehouseFilter.toLowerCase());
+    if (selectedGroups.length > 0) {
+      const lowerSelected = new Set(selectedGroups.map(g => g.toLowerCase()));
+      const matched = activeGroups.filter(g => lowerSelected.has(g.toLowerCase()));
       return matched.length > 0 ? matched : activeGroups;
     }
     return activeGroups;
-  }, [selectedWarehouseFilter, activeGroups]);
+  }, [selectedGroups, activeGroups]);
 
   // Grouped Stock items for the Consolidated Grid
   // Merges child correlated items into their parent item, converting quantity and unit price
@@ -930,6 +1079,68 @@ export default function StockTable({
     return totals;
   }, [activeGroups, groupedStock]);
 
+  // Helper to compute available projected stock for a group (Physical stock minus pending open orders)
+  const getProjectedStockQty = useCallback((
+    row: {
+      productCode: string;
+      groups: { [groupName: string]: { quantity: number } };
+    },
+    targetGroup: string,
+    totalOrdersQty: number
+  ): number => {
+    const physicalQty = row.groups[targetGroup]?.quantity || 0;
+    if (totalOrdersQty <= 0) {
+      return physicalQty;
+    }
+
+    // If only a single warehouse group is displayed/selected, subtract directly from that group
+    if (displayedGroups.length === 1) {
+      return physicalQty - totalOrdersQty;
+    }
+
+    // If displaying multiple groups ("Todos"):
+    const groupsWithStock = displayedGroups.filter(g => (row.groups[g]?.quantity || 0) > 0);
+
+    // Case 1: No group has physical stock, but there are open orders
+    if (groupsWithStock.length === 0) {
+      // Attribute deficit to first active displayed group
+      if (targetGroup === displayedGroups[0]) {
+        return -totalOrdersQty;
+      }
+      return 0;
+    }
+
+    // Case 2: Only one group has physical stock
+    if (groupsWithStock.length === 1) {
+      if (targetGroup === groupsWithStock[0]) {
+        return physicalQty - totalOrdersQty;
+      }
+      return 0;
+    }
+
+    // Case 3: Multiple groups have physical stock -> allocate orders sequentially
+    let remainingOrders = totalOrdersQty;
+    for (let i = 0; i < groupsWithStock.length; i++) {
+      const gName = groupsWithStock[i];
+      const gQty = row.groups[gName]?.quantity || 0;
+      const isTarget = gName === targetGroup;
+      const isLastWithStock = i === groupsWithStock.length - 1;
+
+      if (remainingOrders <= 0) {
+        if (isTarget) return gQty;
+      } else if (isLastWithStock) {
+        // Last group absorbs all remaining orders (may become negative)
+        if (isTarget) return gQty - remainingOrders;
+      } else {
+        const allocated = Math.min(gQty, remainingOrders);
+        if (isTarget) return gQty - allocated;
+        remainingOrders -= allocated;
+      }
+    }
+
+    return physicalQty;
+  }, [displayedGroups]);
+
   // Exportar dados filtrados da grid para Excel
   const [isExporting, setIsExporting] = useState(false);
 
@@ -946,7 +1157,8 @@ export default function StockTable({
         selectedWarehouseFilter,
         searchTerm,
         products,
-        getWarehouseGroup
+        getWarehouseGroup,
+        showProjectedStock
       });
     } catch (err) {
       console.error('Erro ao exportar estoque para Excel:', err);
@@ -1149,6 +1361,18 @@ export default function StockTable({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [ordersModalData]);
+
+  // Keep horizontal overflow and top scrollbar width synchronized with the table width
+  useEffect(() => {
+    checkOverflow();
+    const timer = setTimeout(checkOverflow, 150);
+    const handleResize = () => checkOverflow();
+    window.addEventListener('resize', handleResize);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [checkOverflow, groupedStock, filteredStock, displayedGroups, viewMode, fitToScreen, showProjectedStock]);
 
   // Orders summary for the currently opened modal
   const currentModalOrdersSummary = useMemo(() => {
@@ -1577,19 +1801,144 @@ export default function StockTable({
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-2.5 border-t border-slate-100">
           {/* Warehouse Dropdown Filter & Open Orders Filter */}
           <div className="flex flex-wrap items-center gap-2.5">
-            <div className="flex items-center">
-              <select
+            {/* Multiple Groups Selection Dropdown */}
+            <div className="relative" ref={groupDropdownRef}>
+              <button
                 id="select-group-filter"
-                value={selectedWarehouseFilter}
-                onChange={(e) => setSelectedWarehouseFilter(e.target.value)}
-                aria-label="Filtrar por Grupo"
-                className="border border-slate-300 rounded-lg text-sm bg-white px-3 py-1.5 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 cursor-pointer text-slate-700 font-medium"
+                type="button"
+                onClick={() => setIsGroupDropdownOpen(prev => !prev)}
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer shadow-2xs select-none ${
+                  !isAllGroupsSelected
+                    ? 'bg-indigo-50 text-indigo-950 border-indigo-300 ring-1 ring-indigo-400/40'
+                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50 hover:border-slate-400'
+                }`}
+                title="Filtrar e mesclar grupos de depósitos para visualização na tabela"
+                aria-expanded={isGroupDropdownOpen}
+                aria-haspopup="listbox"
               >
-                <option value="Todos">Todos os Grupos ({activeGroups.length})</option>
-                {activeGroups.map(grp => (
-                  <option key={grp} value={grp}>{grp}</option>
-                ))}
-              </select>
+                <Building className={`h-3.5 w-3.5 ${!isAllGroupsSelected ? 'text-indigo-600' : 'text-slate-500'}`} />
+                
+                <span className="font-medium">
+                  {isAllGroupsSelected ? (
+                    `Todos os Grupos (${activeGroups.length})`
+                  ) : selectedGroups.length === 1 ? (
+                    `Grupo: ${selectedGroups[0]}`
+                  ) : (
+                    `Grupos (${selectedGroups.length}): ${selectedGroups.join(', ')}`
+                  )}
+                </span>
+
+                {!isAllGroupsSelected && (
+                  <span
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSelectAllGroups();
+                    }}
+                    title="Limpar filtro e ver todos os grupos"
+                    className="p-0.5 rounded-full hover:bg-indigo-200 text-indigo-700 transition-colors"
+                  >
+                    <X className="h-3 w-3" />
+                  </span>
+                )}
+
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${
+                  isGroupDropdownOpen ? 'rotate-180 text-indigo-600' : 'text-slate-400'
+                }`} />
+              </button>
+
+              {/* Popover Dropdown Menu */}
+              {isGroupDropdownOpen && (
+                <div 
+                  className="absolute left-0 mt-1.5 w-72 sm:w-80 bg-white rounded-xl shadow-xl border border-slate-200 z-50 overflow-hidden"
+                  role="listbox"
+                >
+                  {/* Header */}
+                  <div className="flex items-center justify-between px-3.5 py-2.5 bg-slate-50 border-b border-slate-100">
+                    <div className="flex items-center gap-1.5">
+                      <Layers className="h-3.5 w-3.5 text-indigo-600" />
+                      <span className="text-xs font-bold text-slate-800">Grupos de Estoque</span>
+                      <span className="text-[10px] font-semibold text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded-full">
+                        {isAllGroupsSelected ? activeGroups.length : selectedGroups.length}/{activeGroups.length}
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleSelectAllGroups}
+                      className={`text-[11px] font-semibold px-2 py-0.5 rounded transition-colors ${
+                        isAllGroupsSelected 
+                          ? 'bg-indigo-100 text-indigo-700 font-bold' 
+                          : 'text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      Todos
+                    </button>
+                  </div>
+
+                  {/* List of Groups with checkboxes */}
+                  <div className="p-1.5 max-h-64 overflow-y-auto divide-y divide-slate-50">
+                    {activeGroups.map(grp => {
+                      const selected = isGroupSelected(grp);
+                      const totalVal = groupTotals[grp] || 0;
+
+                      return (
+                        <div
+                          key={grp}
+                          onClick={() => handleToggleGroup(grp)}
+                          className={`flex items-center justify-between px-2.5 py-2 rounded-lg text-xs cursor-pointer transition-colors group select-none ${
+                            selected 
+                              ? 'bg-indigo-50/70 hover:bg-indigo-100/70 text-indigo-950 font-medium' 
+                              : 'text-slate-600 hover:bg-slate-100/70'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                            <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                              selected 
+                                ? 'bg-indigo-600 border-indigo-600 text-white' 
+                                : 'border-slate-300 bg-white group-hover:border-slate-400'
+                            }`}>
+                              {selected && <Check className="h-3 w-3 stroke-[3]" />}
+                            </div>
+                            <span className="truncate text-xs font-semibold">{grp}</span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {totalVal > 0 && (
+                              <span className="text-[10px] font-mono font-medium text-slate-500">
+                                $ {totalVal.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(e) => handleSelectOnlyGroup(grp, e)}
+                              className="text-[10px] font-medium text-slate-400 hover:text-indigo-600 hover:bg-indigo-100 px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                              title={`Filtrar apenas o grupo ${grp}`}
+                            >
+                              Só este
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Footer */}
+                  <div className="flex items-center justify-between px-3 py-2 bg-slate-50 border-t border-slate-100 text-[11px]">
+                    <span className="text-slate-500">
+                      {isAllGroupsSelected 
+                        ? 'Exibindo todos os grupos' 
+                        : `${selectedGroups.length} grupo(s) selecionado(s)`}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsGroupDropdownOpen(false)}
+                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md shadow-2xs transition-colors cursor-pointer"
+                    >
+                      Concluir
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Filter by Open Orders Chip */}
@@ -1613,6 +1962,31 @@ export default function StockTable({
                 </span>
               )}
             </button>
+
+            {/* Flag / Toggle: Estoque Projetado (Disponível) vs Estoque Real (Físico) */}
+            <button
+              id="btn-toggle-projected-stock"
+              type="button"
+              onClick={handleToggleProjectedStock}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                showProjectedStock
+                  ? 'bg-emerald-100 text-emerald-950 border-emerald-300 shadow-2xs ring-1 ring-emerald-400/50'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
+              }`}
+              title={
+                showProjectedStock
+                  ? 'Exibindo Estoque Projetado: Quantidade Disponível deduzindo pedidos em aberto (Saldo - Pedidos). Clique para alternar para o Estoque Real (Físico em Depósito).'
+                  : 'Exibindo Estoque Real: Saldo físico em depósito sem deduzir pedidos em aberto. Clique para alternar para o Estoque Projetado (Disponível deduzindo pedidos).'
+              }
+            >
+              <Layers className={`h-3.5 w-3.5 ${showProjectedStock ? 'text-emerald-700' : 'text-slate-400'}`} />
+              <span>{showProjectedStock ? 'Estoque Projetado' : 'Estoque Real'}</span>
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                showProjectedStock ? 'bg-emerald-200 text-emerald-900' : 'bg-slate-100 text-slate-600'
+              }`}>
+                {showProjectedStock ? 'Disponível' : 'Físico'}
+              </span>
+            </button>
           </div>
 
           {/* Add/Manage Buttons */}
@@ -1629,6 +2003,28 @@ export default function StockTable({
               </button>
             )}
             
+            {/* Botão Ajustar ao Monitor / Altura da Tela */}
+            <button
+              id="btn-toggle-fit-screen"
+              type="button"
+              onClick={handleToggleFitToScreen}
+              className={`flex items-center justify-center gap-2 border px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer shadow-2xs ${
+                fitToScreen 
+                  ? 'bg-indigo-50 border-indigo-300 text-indigo-800 hover:bg-indigo-100' 
+                  : 'border-slate-300 bg-white hover:bg-slate-50 text-slate-700 hover:border-slate-400'
+              }`}
+              title={
+                fitToScreen
+                  ? 'Modo Monitor Ativo: Tabela com altura ajustada ao monitor, cabeçalho fixo e rolagem horizontal sempre visível sem precisar descer até o final dos itens. Clique para alternar para modo contínuo.'
+                  : 'Modo Contínuo: Tabela expandida em altura natural da página. Clique para fixar a altura ao monitor e manter a rolagem horizontal sempre visível.'
+              }
+            >
+              <Monitor className={`h-4 w-4 ${fitToScreen ? 'text-indigo-600' : 'text-slate-500'}`} />
+              <span className="hidden sm:inline">
+                {fitToScreen ? 'Ajustado ao Monitor' : 'Ajustar ao Monitor'}
+              </span>
+            </button>
+
             {/* Botão Atualizar visível para todos os usuários */}
             <button
               id="btn-update-stock"
@@ -1745,9 +2141,32 @@ export default function StockTable({
         </div>
       )}
 
+      {/* Top synchronized horizontal scrollbar when table content overflows */}
+      {hasHorizontalOverflow && (
+        <div 
+          ref={topScrollRef} 
+          onScroll={handleTopScroll}
+          className="overflow-x-auto bg-slate-100/95 border border-slate-200 rounded-t-xl px-2 py-1.5 shadow-2xs select-none transition-all"
+          title="Barra de rolagem horizontal superior (arraste aqui para navegar pelas colunas sem precisar ir até o final da tabela)"
+        >
+          <div className="flex items-center justify-between text-[11px] text-slate-500 mb-0.5 px-1 font-medium">
+            <span className="flex items-center gap-1.5 text-indigo-700 font-semibold">
+              <ArrowUpDown className="h-3 w-3 rotate-90" />
+              Navegação horizontal rápida das colunas:
+            </span>
+            <span className="text-[10px] text-slate-400 hidden sm:inline">Arraste esta barra ou a barra inferior da tabela</span>
+          </div>
+          <div style={{ width: `${tableScrollWidth}px`, height: '8px' }} className="bg-transparent" />
+        </div>
+      )}
+
       {/* Main Stock Table */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
+      <div className={`bg-white ${hasHorizontalOverflow ? 'rounded-b-xl border-t-0' : 'rounded-xl'} border border-slate-200 shadow-xs overflow-hidden`}>
+        <div 
+          ref={tableContainerRef}
+          onScroll={handleTableScroll}
+          className={`overflow-x-auto ${fitToScreen ? 'overflow-y-auto max-h-[calc(100vh-270px)] min-h-[420px]' : ''}`}
+        >
           {(viewMode === 'consolidated' ? groupedStock.length === 0 : filteredStock.length === 0) ? (
             <div className="text-center py-12 text-slate-400">
               <Package className="h-12 w-12 text-slate-300 mx-auto mb-3" />
@@ -1756,16 +2175,16 @@ export default function StockTable({
             </div>
           ) : viewMode === 'consolidated' ? (
             <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase bg-slate-50">
-                  <th rowSpan={2} className="px-6 py-3.5 whitespace-nowrap min-w-[130px] border-b border-slate-200 align-middle">
+              <thead className="sticky top-0 z-20 shadow-2xs bg-slate-100">
+                <tr className="border-b border-slate-200 text-xs font-semibold text-slate-600 uppercase">
+                  <th rowSpan={2} className="px-6 py-3 whitespace-nowrap min-w-[130px] border-b border-slate-200 align-middle bg-slate-100">
                     Código (SKU)
                   </th>
-                  <th rowSpan={2} className="px-6 py-3.5 min-w-[200px] border-b border-slate-200 align-middle">
+                  <th rowSpan={2} className="px-6 py-3 min-w-[200px] border-b border-slate-200 align-middle bg-slate-100">
                     Produto
                   </th>
-                  <th rowSpan={2} className="px-4 py-2 border-l border-b border-slate-200 bg-amber-50/60 text-center min-w-[140px] whitespace-nowrap align-middle">
-                    <span className="text-xs font-bold text-amber-950 block border-b border-amber-200 pb-1 mb-1">
+                  <th rowSpan={2} className="px-4 py-2 border-l border-b border-slate-200 bg-amber-100/90 text-center min-w-[140px] whitespace-nowrap align-middle">
+                    <span className="text-xs font-bold text-amber-950 block border-b border-amber-300 pb-1 mb-1">
                       Pedidos em Aberto
                     </span>
                     <div className="flex items-center justify-center gap-1 text-[10px] text-amber-800 tracking-wider font-semibold">
@@ -1777,31 +2196,45 @@ export default function StockTable({
                     <th 
                       key={grp} 
                       colSpan={3} 
-                      className="px-4 py-2.5 border-l border-b border-slate-200 bg-indigo-50/30 text-center min-w-[350px]"
+                      className={`px-4 py-2.5 border-l border-b border-slate-200 text-center min-w-[350px] transition-colors ${
+                        showProjectedStock ? 'bg-emerald-100/70' : 'bg-indigo-100/90'
+                      }`}
                     >
-                      <span className="text-xs font-bold text-indigo-950 block tracking-wide">
+                      <span className={`text-xs font-bold block tracking-wide ${
+                        showProjectedStock ? 'text-emerald-950' : 'text-indigo-950'
+                      }`}>
                         {grp} = {"$ " + (groupTotals[grp] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </th>
                   ))}
                 </tr>
                 {/* Linha 2 do cabeçalho: colunas específicas para cada grupo */}
-                <tr className="border-b border-slate-200 text-[10px] font-semibold text-slate-500 uppercase bg-slate-50/90">
+                <tr className="border-b border-slate-200 text-[10px] font-semibold text-slate-600 uppercase">
                   {displayedGroups.map(grp => (
                     <Fragment key={grp}>
                       <th 
-                        className="px-3 py-2 border-l border-slate-200 bg-indigo-50/15 text-center font-bold text-indigo-900 min-w-[110px] whitespace-nowrap"
-                        title="Dê dois cliques no número da quantidade para detalhar por lote"
+                        className={`px-3 py-2 border-l border-slate-200 text-center font-bold min-w-[110px] whitespace-nowrap transition-colors ${
+                          showProjectedStock ? 'bg-emerald-50 text-emerald-950' : 'bg-indigo-50 text-indigo-900'
+                        }`}
+                        title={
+                          showProjectedStock
+                            ? 'Quantidade Projetada / Disponível = Saldo Físico do Grupo - Pedidos em Aberto. Dê dois cliques no número para detalhar por lote.'
+                            : 'Quantidade de Saldo Físico em Depósito. Dê dois cliques no número para detalhar por lote.'
+                        }
                       >
                         <span className="inline-flex items-center justify-center gap-1">
-                          Quantidade
-                          <Layers className="h-2.5 w-2.5 text-indigo-500 shrink-0" />
+                          <span>{showProjectedStock ? 'Qtd Disponível' : 'Quantidade'}</span>
+                          <Layers className={`h-2.5 w-2.5 shrink-0 ${showProjectedStock ? 'text-emerald-600' : 'text-indigo-500'}`} />
                         </span>
                       </th>
-                      <th className="px-3 py-2 bg-indigo-50/15 text-right font-bold text-slate-600 min-w-[115px] whitespace-nowrap">
+                      <th className={`px-3 py-2 text-right font-bold text-slate-700 min-w-[115px] whitespace-nowrap ${
+                        showProjectedStock ? 'bg-emerald-50/60' : 'bg-indigo-50'
+                      }`}>
                         Preço Unit Médio
                       </th>
-                      <th className="px-3 py-2 bg-indigo-50/15 text-right font-bold text-slate-600 min-w-[125px] whitespace-nowrap">
+                      <th className={`px-3 py-2 text-right font-bold text-slate-700 min-w-[125px] whitespace-nowrap ${
+                        showProjectedStock ? 'bg-emerald-50/60' : 'bg-indigo-50'
+                      }`}>
                         Vr Total Médio
                       </th>
                     </Fragment>
@@ -1879,28 +2312,82 @@ export default function StockTable({
                                   handleOpenBatchModal(row.productCode, row.productName, grp);
                                 }
                               }}
-                              title={hasQty ? `Duplo clique para abrir o saldo por lote de ${row.productCode} em ${grp}` : undefined}
+                              title={
+                                showProjectedStock
+                                  ? (() => {
+                                      const projQty = getProjectedStockQty(row, grp, ordersSummary.totalQtyOrdered);
+                                      return `Estoque Projetado: ${data.quantity} un (físico) - ${ordersSummary.totalQtyOrdered} un (pedidos a sair) = ${projQty} un disponível.${hasQty ? ' Dê duplo clique para abrir o saldo por lote.' : ''}`;
+                                    })()
+                                  : (hasQty ? `Duplo clique para abrir o saldo por lote de ${row.productCode} em ${grp}` : undefined)
+                              }
                               className={`px-3 py-3.5 border-l border-slate-200 align-middle text-center whitespace-nowrap min-w-[110px] transition-colors ${
                                 hasQty ? 'hover:bg-indigo-50/40 cursor-pointer' : ''
                               }`}
                             >
-                              <div 
-                                className={`font-mono font-bold select-none transition-all inline-flex items-center justify-center gap-1 mx-auto py-1 px-2 rounded-md ${
-                                  hasQty 
-                                    ? 'text-indigo-900 bg-indigo-50/70 hover:bg-indigo-100 hover:text-indigo-700 border border-indigo-200/80 shadow-2xs group/qty active:scale-95' 
-                                    : 'text-slate-300'
-                                }`}
-                              >
-                                {hasQty ? (
-                                  <>
-                                    <span>{data.quantity.toLocaleString('pt-BR')}</span>
-                                    <span className="text-[10px] text-indigo-500/80 font-normal">un</span>
-                                    <Layers className="h-3 w-3 text-indigo-500 opacity-60 group-hover/qty:opacity-100 transition-opacity ml-0.5 shrink-0" />
-                                  </>
-                                ) : (
-                                  <span className="text-slate-300">0</span>
-                                )}
-                              </div>
+                              {showProjectedStock ? (
+                                (() => {
+                                  const projQty = getProjectedStockQty(row, grp, ordersSummary.totalQtyOrdered);
+
+                                  if (projQty > 0) {
+                                    return (
+                                      <div 
+                                        className="font-mono font-bold select-none transition-all inline-flex items-center justify-center gap-1 mx-auto py-1 px-2.5 rounded-md text-emerald-950 bg-emerald-100 border border-emerald-300 shadow-2xs hover:bg-emerald-200/90 group/qty active:scale-95"
+                                      >
+                                        <span>{projQty.toLocaleString('pt-BR')}</span>
+                                        <span className="text-[10px] text-emerald-800 font-semibold">un</span>
+                                        <Layers className="h-3 w-3 text-emerald-700 opacity-70 group-hover/qty:opacity-100 transition-opacity ml-0.5 shrink-0" />
+                                      </div>
+                                    );
+                                  }
+
+                                  if (projQty < 0) {
+                                    return (
+                                      <div 
+                                        className="font-mono font-black select-none transition-all inline-flex items-center justify-center gap-1 mx-auto py-1 px-2.5 rounded-md text-rose-950 bg-rose-100 border border-rose-300 shadow-2xs hover:bg-rose-200 group/qty active:scale-95"
+                                      >
+                                        <AlertCircle className="h-3.5 w-3.5 text-rose-700 shrink-0" />
+                                        <span>{projQty.toLocaleString('pt-BR')}</span>
+                                        <span className="text-[10px] text-rose-800 font-bold">un</span>
+                                        {hasQty && (
+                                          <Layers className="h-3 w-3 text-rose-600 opacity-70 group-hover/qty:opacity-100 transition-opacity ml-0.5 shrink-0" />
+                                        )}
+                                      </div>
+                                    );
+                                  }
+
+                                  // projQty === 0
+                                  if (hasQty && ordersSummary.totalQtyOrdered > 0) {
+                                    return (
+                                      <div 
+                                        className="font-mono font-bold select-none transition-all inline-flex items-center justify-center gap-1 mx-auto py-1 px-2 rounded-md text-amber-950 bg-amber-100 border border-amber-300 shadow-2xs"
+                                      >
+                                        <span>0</span>
+                                        <span className="text-[10px] text-amber-800 font-semibold">un</span>
+                                      </div>
+                                    );
+                                  }
+
+                                  return <span className="text-slate-300">0</span>;
+                                })()
+                              ) : (
+                                <div 
+                                  className={`font-mono font-bold select-none transition-all inline-flex items-center justify-center gap-1 mx-auto py-1 px-2 rounded-md ${
+                                    hasQty 
+                                      ? 'text-indigo-900 bg-indigo-50/70 hover:bg-indigo-100 hover:text-indigo-700 border border-indigo-200/80 shadow-2xs group/qty active:scale-95' 
+                                      : 'text-slate-300'
+                                  }`}
+                                >
+                                  {hasQty ? (
+                                    <>
+                                      <span>{data.quantity.toLocaleString('pt-BR')}</span>
+                                      <span className="text-[10px] text-indigo-500/80 font-normal">un</span>
+                                      <Layers className="h-3 w-3 text-indigo-500 opacity-60 group-hover/qty:opacity-100 transition-opacity ml-0.5 shrink-0" />
+                                    </>
+                                  ) : (
+                                    <span className="text-slate-300">0</span>
+                                  )}
+                                </div>
+                              )}
                             </td>
 
                             {/* Preço Unit Médio Cell */}
@@ -1950,25 +2437,30 @@ export default function StockTable({
             </table>
           ) : (
             <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase bg-slate-50">
-                  <th className="px-6 py-3.5">Código (SKU)</th>
-                  <th className="px-6 py-3.5">Produto</th>
-                  <th className="px-4 py-3.5 text-center bg-amber-50/50 min-w-[130px]">Pedidos em Aberto</th>
-                  <th className="px-6 py-3.5">Depósito</th>
-                  <th className="px-6 py-3.5">Cód. Interno</th>
-                  <th className="px-6 py-3.5">Cód. Estruturado</th>
-                  <th className="px-6 py-3.5">Lote</th>
-                  <th className="px-6 py-3.5">Preço Unit</th>
-                  <th className="px-6 py-3.5">Preço/Vl Rest</th>
-                  <th className="px-6 py-3.5 text-center">Quantidade Saldo</th>
-                  {canManageStock && <th className="px-6 py-3.5 text-right">Ações</th>}
+              <thead className="sticky top-0 z-20 shadow-2xs bg-slate-100">
+                <tr className="border-b border-slate-200 text-xs font-semibold text-slate-600 uppercase bg-slate-100">
+                  <th className="px-6 py-3.5 bg-slate-100">Código (SKU)</th>
+                  <th className="px-6 py-3.5 bg-slate-100">Produto</th>
+                  <th className="px-4 py-3.5 text-center bg-amber-100/90 min-w-[130px]">Pedidos em Aberto</th>
+                  <th className="px-6 py-3.5 bg-slate-100">Depósito</th>
+                  <th className="px-6 py-3.5 bg-slate-100">Cód. Interno</th>
+                  <th className="px-6 py-3.5 bg-slate-100">Cód. Estruturado</th>
+                  <th className="px-6 py-3.5 bg-slate-100">Lote</th>
+                  <th className="px-6 py-3.5 bg-slate-100">Preço Unit</th>
+                  <th className="px-6 py-3.5 bg-slate-100">Preço/Vl Rest</th>
+                  <th className={`px-6 py-3.5 text-center transition-colors ${
+                    showProjectedStock ? 'bg-emerald-100/80 text-emerald-950 font-bold' : 'bg-slate-100'
+                  }`}>
+                    {showProjectedStock ? 'Qtd Saldo (Disponível)' : 'Quantidade Saldo'}
+                  </th>
+                  {canManageStock && <th className="px-6 py-3.5 text-right bg-slate-100">Ações</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
                 {filteredStock.map((item) => {
                   const isOutOfStock = item.quantity === 0;
                   const isLowStock = item.quantity > 0 && item.quantity <= 3;
+                  const ordSummary = getProductOrdersSummary(item.productCode);
 
                   // Resolve the resolved values (stored in stock balance OR fall back to product catalog)
                   const prod = products.find(p => p.code === item.productCode);
@@ -2085,28 +2577,48 @@ export default function StockTable({
 
                       {/* Quantity */}
                       <td className="px-6 py-4 text-center">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <span className={`font-mono font-bold text-base ${
-                            isOutOfStock 
-                              ? 'text-rose-600' 
-                              : isLowStock 
-                                ? 'text-amber-600' 
-                                : 'text-slate-800'
-                          }`}>
-                            {item.quantity}
-                          </span>
-                          <span className="text-xs text-slate-400">un</span>
-                          
-                          {isOutOfStock && (
-                            <span className="text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded-sm">
-                              Zerar
+                        <div className="flex flex-col items-center justify-center gap-1">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <span className={`font-mono font-bold text-base ${
+                              isOutOfStock 
+                                ? 'text-rose-600' 
+                                : isLowStock 
+                                  ? 'text-amber-600' 
+                                  : 'text-slate-800'
+                            }`}>
+                              {item.quantity}
                             </span>
-                          )}
-                          {isLowStock && (
-                            <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-sm">
-                              Baixo
-                            </span>
-                          )}
+                            <span className="text-xs text-slate-400">un</span>
+                            
+                            {isOutOfStock && (
+                              <span className="text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded-sm">
+                                Zerar
+                              </span>
+                            )}
+                            {isLowStock && (
+                              <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-sm">
+                                Baixo
+                              </span>
+                            )}
+                          </div>
+
+                          {showProjectedStock && ordSummary.totalQtyOrdered > 0 && (() => {
+                            const available = item.quantity - ordSummary.totalQtyOrdered;
+                            const isPositive = available >= 0;
+                            return (
+                              <span 
+                                title={`Estoque Projetado: ${item.quantity} un (físico) - ${ordSummary.totalQtyOrdered} un (pedidos em aberto) = ${available} un`}
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold border shadow-2xs ${
+                                  isPositive 
+                                    ? 'bg-emerald-100 text-emerald-900 border-emerald-300' 
+                                    : 'bg-rose-100 text-rose-900 border-rose-300'
+                                }`}
+                              >
+                                {!isPositive && <AlertCircle className="h-2.5 w-2.5 text-rose-700 shrink-0" />}
+                                <span>{available > 0 ? `+${available}` : available} un disp.</span>
+                              </span>
+                            );
+                          })()}
                         </div>
                       </td>
 

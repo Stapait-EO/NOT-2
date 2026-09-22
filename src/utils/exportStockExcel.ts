@@ -25,6 +25,7 @@ export interface ExportStockExcelParams {
   searchTerm?: string;
   products: Product[];
   getWarehouseGroup?: (whName: string) => string;
+  showProjectedStock?: boolean;
 }
 
 export async function exportStockToExcel(params: ExportStockExcelParams): Promise<void> {
@@ -38,7 +39,8 @@ export async function exportStockToExcel(params: ExportStockExcelParams): Promis
     selectedWarehouseFilter,
     searchTerm,
     products,
-    getWarehouseGroup
+    getWarehouseGroup,
+    showProjectedStock
   } = params;
 
   const workbook = new ExcelJS.Workbook();
@@ -51,9 +53,9 @@ export async function exportStockToExcel(params: ExportStockExcelParams): Promis
     // ----------------------------------------------------
     // CONSOLIDATED VIEW EXPORT (Default & Primary Grid)
     // ----------------------------------------------------
-    const sheetName = selectedWarehouseFilter !== 'Todos'
-      ? `Estoque - ${selectedWarehouseFilter}`.slice(0, 31)
-      : 'Analise Estoque';
+    const sheetName = displayedGroups.length === 1
+      ? `Estoque - ${displayedGroups[0]}`.slice(0, 31)
+      : (selectedWarehouseFilter !== 'Todos' ? 'Estoque Filtrado' : 'Analise Estoque');
 
     const worksheet = workbook.addWorksheet(sheetName, {
       views: [
@@ -95,7 +97,7 @@ export async function exportStockToExcel(params: ExportStockExcelParams): Promis
       colDefs.push({
         key: `qty_${grp}`,
         headerTop: grpLabel,
-        headerSub: 'Quantidade',
+        headerSub: showProjectedStock ? 'Qtd Disponível' : 'Quantidade',
         groupName: grp,
         width: 16,
         align: 'right',
@@ -239,6 +241,9 @@ export async function exportStockToExcel(params: ExportStockExcelParams): Promis
         openQty > 0 ? openQty : null
       ];
 
+      // Determine groups with stock for allocation
+      const groupsWithStock = displayedGroups.filter(g => (row.groups[g]?.quantity || 0) > 0);
+
       displayedGroups.forEach(grp => {
         const data = row.groups[grp] || { quantity: 0, sumPrPrecoTimesQty: 0, sumVlrestTimesQty: 0 };
         const qty = data.quantity || 0;
@@ -248,7 +253,41 @@ export async function exportStockToExcel(params: ExportStockExcelParams): Promis
         groupTotalsAccum[grp].totalQty += qty;
         groupTotalsAccum[grp].totalValue += totalVal;
 
-        rowValues.push(qty > 0 ? qty : null);
+        let displayQty: number | null = null;
+        if (showProjectedStock) {
+          if (openQty <= 0) {
+            displayQty = qty > 0 ? qty : null;
+          } else if (displayedGroups.length === 1) {
+            displayQty = qty - openQty;
+          } else if (groupsWithStock.length === 0) {
+            displayQty = grp === displayedGroups[0] ? -openQty : null;
+          } else if (groupsWithStock.length === 1) {
+            displayQty = grp === groupsWithStock[0] ? qty - openQty : null;
+          } else {
+            // Allocate across multiple groups with stock
+            let remainingOrders = openQty;
+            for (let i = 0; i < groupsWithStock.length; i++) {
+              const gName = groupsWithStock[i];
+              const gQty = row.groups[gName]?.quantity || 0;
+              const isTarget = gName === grp;
+              const isLast = i === groupsWithStock.length - 1;
+
+              if (remainingOrders <= 0) {
+                if (isTarget) displayQty = gQty;
+              } else if (isLast) {
+                if (isTarget) displayQty = gQty - remainingOrders;
+              } else {
+                const allocated = Math.min(gQty, remainingOrders);
+                if (isTarget) displayQty = gQty - allocated;
+                remainingOrders -= allocated;
+              }
+            }
+          }
+        } else {
+          displayQty = qty > 0 ? qty : null;
+        }
+
+        rowValues.push(displayQty !== null && displayQty !== 0 ? displayQty : (displayQty === 0 ? 0 : null));
         rowValues.push(qty > 0 ? avgPrice : null);
         rowValues.push(qty > 0 ? totalVal : null);
       });
@@ -267,11 +306,21 @@ export async function exportStockToExcel(params: ExportStockExcelParams): Promis
           pattern: 'solid',
           fgColor: { argb: rowBg }
         };
+        const cellVal = cell.value;
+        const isNegativeQty = def.isQuantity && typeof cellVal === 'number' && cellVal < 0;
+        const isPositiveProjQty = showProjectedStock && def.isQuantity && typeof cellVal === 'number' && cellVal > 0 && colNumber >= 4;
+
         cell.font = {
           name: 'Segoe UI',
           size: 9.5,
-          color: { argb: 'FF1E293B' },
-          bold: colNumber === 1
+          color: { 
+            argb: isNegativeQty 
+              ? 'FFBE123C' // Rose 700
+              : isPositiveProjQty 
+                ? 'FF065F46' // Emerald 800
+                : 'FF1E293B' 
+          },
+          bold: colNumber === 1 || isNegativeQty || isPositiveProjQty
         };
         cell.alignment = {
           vertical: 'middle',

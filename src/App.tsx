@@ -787,7 +787,7 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
       
       {/* Premium Header Bar in #0c396b Deep Navy Tone */}
       <header className="bg-[#0c396b] text-white shrink-0 shadow-md border-b border-[#082b52]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className={`mx-auto px-4 sm:px-6 lg:px-8 ${activeTab === 'stock' || activeTab === 'sales' ? 'max-w-[99vw]' : 'max-w-7xl'}`}>
           <div className="flex items-center justify-between h-16">
             
             {/* Main Tabs Navigation */}
@@ -972,7 +972,11 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className={`flex-1 w-full mx-auto py-5 ${
+        activeTab === 'stock' || activeTab === 'sales' 
+          ? 'max-w-[99vw] px-2 sm:px-4 lg:px-6' 
+          : 'max-w-7xl px-4 sm:px-6 lg:px-8'
+      }`}>
         
         {/* Active Tab View Rendering */}
         {activeTab === 'dashboard' && (
