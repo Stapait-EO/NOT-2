@@ -19,11 +19,15 @@ import {
   PackageCheck,
   RefreshCw,
   Clipboard,
-  Zap
+  Zap,
+  LayoutGrid,
+  Table
 } from 'lucide-react';
 import { OrderHeader, OrderItem, Product, UserRole, WebhookConfig, FieldMapping, StockBalance, Warehouse, OrderPriority } from '../types';
 import { executeProxyWebhook } from '../utils/proxyWebhook';
 import { calculateOrderPriority, getPriorityBadgeClasses, OrderPriorityEvaluation } from '../utils/orderPriority';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { OrdersMobileCards } from './OrdersMobileCards';
 
 interface OrdersTableProps {
   orders: OrderHeader[];
@@ -55,6 +59,28 @@ export default function OrdersTable({
   fieldMappings
 }: OrdersTableProps) {
   const canManageOrders = currentUserRole === 'admin' || currentUserRole === 'vendedor';
+
+  // Mobile adaptive layout & cards/table toggle
+  const { isMobile } = useIsMobile();
+  const [ordersDisplayPreference, setOrdersDisplayPreference] = useState<'cards' | 'table' | null>(() => {
+    try {
+      const saved = localStorage.getItem('orders_display_mode');
+      if (saved === 'cards' || saved === 'table') return saved;
+      return null;
+    } catch {
+      return null;
+    }
+  });
+  const activeOrdersDisplay = ordersDisplayPreference ?? (isMobile ? 'cards' : 'table');
+
+  const handleSetOrdersDisplay = (mode: 'cards' | 'table') => {
+    setOrdersDisplayPreference(mode);
+    try {
+      localStorage.setItem('orders_display_mode', mode);
+    } catch {
+      // ignore
+    }
+  };
 
   // Webhook execution and import integration states for Orders
   const [isUpdating, setIsUpdating] = useState(false);
@@ -1231,6 +1257,36 @@ export default function OrdersTable({
             )}
           </button>
 
+          {/* Seletor de Modo Cards / Tabela */}
+          <div className="inline-flex rounded-lg border border-slate-300 p-0.5 bg-slate-100 shadow-2xs">
+            <button
+              type="button"
+              onClick={() => handleSetOrdersDisplay('cards')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                activeOrdersDisplay === 'cards'
+                  ? 'bg-white text-indigo-700 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="Modo Cards: Otimizado para celular e telas menores com cartões táteis"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              <span>Cards</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSetOrdersDisplay('table')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                activeOrdersDisplay === 'table'
+                  ? 'bg-white text-indigo-700 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="Modo Tabela: Grade tabular tradicional completa com colunas"
+            >
+              <Table className="h-3.5 w-3.5" />
+              <span>Tabela</span>
+            </button>
+          </div>
+
           {orders.length > 0 && canManageOrders && (
             <button
               id="btn-recalculate-priorities"
@@ -1272,9 +1328,18 @@ export default function OrdersTable({
         </div>
       </div>
 
-      {/* Orders List Table */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
+      {/* Orders List Content: Mobile Cards or Traditional Table */}
+      {activeOrdersDisplay === 'cards' ? (
+        <OrdersMobileCards
+          orders={filteredOrders}
+          orderEvaluations={orderEvaluations}
+          canManageOrders={canManageOrders}
+          onEditOrder={handleOpenEditModal}
+          onDeleteOrder={handleOpenDeleteConfirm}
+        />
+      ) : (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+          <div className="overflow-x-auto">
           {filteredOrders.length === 0 ? (
             <div className="text-center py-12 text-slate-400">
               <FileText className="h-12 w-12 text-slate-300 mx-auto mb-3" />
@@ -1522,6 +1587,7 @@ export default function OrdersTable({
           )}
         </div>
       </div>
+      )}
 
       {/* MODAL - CADASTRO / EDIÇÃO DE PEDIDOS */}
       {isModalOpen && (

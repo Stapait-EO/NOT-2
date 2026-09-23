@@ -30,13 +30,17 @@ import {
   FileSpreadsheet,
   Monitor,
   ChevronDown,
-  Filter
+  Filter,
+  LayoutGrid,
+  Table
 } from 'lucide-react';
 import { StockBalance, Product, UserRole, WebhookConfig, FieldMapping, Warehouse, OrderHeader } from '../types';
 import { INITIAL_WAREHOUSES } from '../data';
 import { executeProxyWebhook } from '../utils/proxyWebhook';
 import { getPriorityBadgeClasses } from '../utils/orderPriority';
 import { exportStockToExcel } from '../utils/exportStockExcel';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { StockMobileCards } from './StockMobileCards';
 
 interface StockTableProps {
   stock: StockBalance[];
@@ -82,6 +86,29 @@ export default function StockTable({
   const [isGroupDropdownOpen, setIsGroupDropdownOpen] = useState(false);
   const groupDropdownRef = useRef<HTMLDivElement>(null);
   const [filterOnlyWithOpenOrders, setFilterOnlyWithOpenOrders] = useState(false);
+
+  // Mobile adaptive layout & cards/table toggle
+  const { isMobile, isTouchDevice } = useIsMobile();
+  const [mobileDisplayPreference, setMobileDisplayPreference] = useState<'cards' | 'table' | null>(() => {
+    try {
+      const saved = localStorage.getItem('stock_display_mode');
+      if (saved === 'cards' || saved === 'table') return saved;
+      return null;
+    } catch {
+      return null;
+    }
+  });
+
+  const activeDisplayMode = mobileDisplayPreference ?? (isMobile ? 'cards' : 'table');
+
+  const handleSetDisplayPreference = (mode: 'cards' | 'table') => {
+    setMobileDisplayPreference(mode);
+    try {
+      localStorage.setItem('stock_display_mode', mode);
+    } catch {
+      // ignore
+    }
+  };
 
   // Webhook execution and import integration states
   const [isUpdating, setIsUpdating] = useState(false);
@@ -1797,75 +1824,186 @@ export default function StockTable({
           )}
         </div>
 
-        {/* Row 2: Warehouse Filter (Left) & Actions (Right) */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-2.5 border-t border-slate-100">
-          {/* Warehouse Dropdown Filter & Open Orders Filter */}
-          <div className="flex flex-wrap items-center gap-2.5">
-            {/* Multiple Groups Selection Dropdown */}
-            <div className="relative" ref={groupDropdownRef}>
-              <button
-                id="select-group-filter"
-                type="button"
-                onClick={() => setIsGroupDropdownOpen(prev => !prev)}
-                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer shadow-2xs select-none ${
-                  !isAllGroupsSelected
-                    ? 'bg-indigo-50 text-indigo-950 border-indigo-300 ring-1 ring-indigo-400/40'
-                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50 hover:border-slate-400'
-                }`}
-                title="Filtrar e mesclar grupos de depósitos para visualização na tabela"
-                aria-expanded={isGroupDropdownOpen}
-                aria-haspopup="listbox"
-              >
-                <Building className={`h-3.5 w-3.5 ${!isAllGroupsSelected ? 'text-indigo-600' : 'text-slate-500'}`} />
-                
-                <span className="font-medium">
-                  {isAllGroupsSelected ? (
-                    `Todos os Grupos (${activeGroups.length})`
-                  ) : selectedGroups.length === 1 ? (
-                    `Grupo: ${selectedGroups[0]}`
-                  ) : (
-                    `Grupos (${selectedGroups.length}): ${selectedGroups.join(', ')}`
-                  )}
-                </span>
+        {/* Row 2: Controls & Actions (Responsive: Mobile Nav-style Bar vs Desktop Toolbar) */}
+        <div className="pt-2.5 border-t border-slate-100">
 
-                {!isAllGroupsSelected && (
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleSelectAllGroups();
-                    }}
-                    title="Limpar filtro e ver todos os grupos"
-                    className="p-0.5 rounded-full hover:bg-indigo-200 text-indigo-700 transition-colors"
-                  >
-                    <X className="h-3 w-3" />
+          {/* MOBILE CONTROL BAR - Estilo harmônico idêntico ao componente 'nav' do rodapé */}
+          <div className="lg:hidden flex flex-col gap-2">
+            {/* Nav-style segmented control bar */}
+            <div className="bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl p-1 shadow-xs [transform:translateZ(0)]">
+              <div className="grid grid-cols-5 gap-1 items-center">
+                {/* 1. Depósitos (Grupos) */}
+                <button
+                  type="button"
+                  onClick={() => setIsGroupDropdownOpen(prev => !prev)}
+                  className={`relative flex flex-col items-center justify-center min-h-[48px] py-1 px-0.5 rounded-xl transition-all duration-200 cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent] active:scale-[0.96] ${
+                    !isAllGroupsSelected
+                      ? 'text-indigo-600 font-bold bg-indigo-50/80'
+                      : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+                  }`}
+                  title="Filtrar grupos de depósitos"
+                >
+                  <div className="relative flex items-center justify-center w-7 h-7">
+                    <Building className="w-[19px] h-[19px] shrink-0 [shape-rendering:geometricPrecision] [vector-effect:non-scaling-stroke]" />
+                    {!isAllGroupsSelected && (
+                      <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-indigo-600 ring-1 ring-white" />
+                    )}
+                  </div>
+                  <span className="text-[10px] tracking-tight mt-0.5 font-semibold truncate max-w-full text-center leading-none">
+                    {isAllGroupsSelected ? 'Depósitos' : `${selectedGroups.length} Sel.`}
                   </span>
+                </button>
+
+                {/* 2. Saldo Projetado vs Real */}
+                <button
+                  type="button"
+                  onClick={handleToggleProjectedStock}
+                  className={`relative flex flex-col items-center justify-center min-h-[48px] py-1 px-0.5 rounded-xl transition-all duration-200 cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent] active:scale-[0.96] ${
+                    showProjectedStock
+                      ? 'text-emerald-700 font-bold bg-emerald-50/80'
+                      : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+                  }`}
+                  title={showProjectedStock ? 'Estoque Projetado ativo' : 'Estoque Físico ativo'}
+                >
+                  <div className="relative flex items-center justify-center w-7 h-7">
+                    <Layers className="w-[19px] h-[19px] shrink-0 [shape-rendering:geometricPrecision] [vector-effect:non-scaling-stroke]" />
+                  </div>
+                  <span className="text-[10px] tracking-tight mt-0.5 font-semibold truncate max-w-full text-center leading-none">
+                    {showProjectedStock ? 'Projetado' : 'Físico'}
+                  </span>
+                </button>
+
+                {/* 3. Pedidos a Sair */}
+                <button
+                  type="button"
+                  onClick={() => setFilterOnlyWithOpenOrders(!filterOnlyWithOpenOrders)}
+                  className={`relative flex flex-col items-center justify-center min-h-[48px] py-1 px-0.5 rounded-xl transition-all duration-200 cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent] active:scale-[0.96] ${
+                    filterOnlyWithOpenOrders
+                      ? 'text-amber-800 font-bold bg-amber-50/80'
+                      : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+                  }`}
+                  title="Filtrar apenas produtos com pedidos em aberto a sair"
+                >
+                  <div className="relative flex items-center justify-center w-7 h-7">
+                    <Truck className="w-[19px] h-[19px] shrink-0 [shape-rendering:geometricPrecision] [vector-effect:non-scaling-stroke]" />
+                    {totalProductsWithOrdersCount > 0 && (
+                      <span className="absolute -top-0.5 -right-1 min-w-[15px] h-[15px] px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold font-mono flex items-center justify-center ring-[1.5px] ring-white">
+                        {totalProductsWithOrdersCount}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] tracking-tight mt-0.5 font-semibold truncate max-w-full text-center leading-none">
+                    A Sair
+                  </span>
+                </button>
+
+                {/* 4. Modo Cards vs Tabela */}
+                <button
+                  type="button"
+                  onClick={() => handleSetDisplayPreference(activeDisplayMode === 'cards' ? 'table' : 'cards')}
+                  className={`relative flex flex-col items-center justify-center min-h-[48px] py-1 px-0.5 rounded-xl transition-all duration-200 cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent] active:scale-[0.96] ${
+                    activeDisplayMode === 'cards'
+                      ? 'text-indigo-600 font-bold bg-indigo-50/80'
+                      : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+                  }`}
+                  title="Alternar entre visualização de Cards e Tabela"
+                >
+                  <div className="relative flex items-center justify-center w-7 h-7">
+                    {activeDisplayMode === 'cards' ? (
+                      <LayoutGrid className="w-[19px] h-[19px] shrink-0 [shape-rendering:geometricPrecision] [vector-effect:non-scaling-stroke]" />
+                    ) : (
+                      <Table className="w-[19px] h-[19px] shrink-0 [shape-rendering:geometricPrecision] [vector-effect:non-scaling-stroke]" />
+                    )}
+                  </div>
+                  <span className="text-[10px] tracking-tight mt-0.5 font-semibold truncate max-w-full text-center leading-none">
+                    {activeDisplayMode === 'cards' ? 'Cards' : 'Tabela'}
+                  </span>
+                </button>
+
+                {/* 5. Atualizar (Sync Webhook) */}
+                <button
+                  type="button"
+                  onClick={handleExecuteUpdate}
+                  disabled={isUpdating}
+                  className={`relative flex flex-col items-center justify-center min-h-[48px] py-1 px-0.5 rounded-xl transition-all duration-200 cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent] active:scale-[0.96] ${
+                    isUpdating
+                      ? 'text-emerald-700 font-bold bg-emerald-50/80'
+                      : 'text-slate-500 hover:text-emerald-700 hover:bg-emerald-50'
+                  }`}
+                  title="Atualizar dados de estoque via Webhook"
+                >
+                  <div className="relative flex items-center justify-center w-7 h-7">
+                    <RefreshCw className={`w-[19px] h-[19px] shrink-0 [shape-rendering:geometricPrecision] [vector-effect:non-scaling-stroke] ${isUpdating ? 'animate-spin text-emerald-600' : ''}`} />
+                  </div>
+                  <span className="text-[10px] tracking-tight mt-0.5 font-semibold truncate max-w-full text-center leading-none">
+                    {isUpdating ? 'Lendo...' : 'Atualizar'}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {/* Ações Secundárias no Mobile em linha compacta */}
+            <div className="flex items-center justify-between gap-1.5 px-0.5">
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleExportExcel}
+                  disabled={isExporting}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200/90 bg-white text-slate-700 text-xs font-semibold shadow-2xs hover:bg-slate-50 active:scale-95 transition-all cursor-pointer"
+                  title="Exportar para Excel"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Excel</span>
+                </button>
+
+                {isMasterOrAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setIsWhManagementOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200/90 bg-white text-slate-700 text-xs font-semibold shadow-2xs hover:bg-slate-50 active:scale-95 transition-all cursor-pointer"
+                    title="Cadastro de Depósitos"
+                  >
+                    <Building className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Cadastro</span>
+                  </button>
                 )}
+              </div>
 
-                <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${
-                  isGroupDropdownOpen ? 'rotate-180 text-indigo-600' : 'text-slate-400'
-                }`} />
-              </button>
+              {isMasterOrAdmin && (
+                <button
+                  type="button"
+                  onClick={handleOpenAddModal}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-semibold shadow-xs hover:bg-indigo-700 active:scale-95 transition-all cursor-pointer shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Novo Saldo</span>
+                </button>
+              )}
+            </div>
 
-              {/* Popover Dropdown Menu */}
-              {isGroupDropdownOpen && (
+            {/* Modal de seleção de grupos no mobile */}
+            {isGroupDropdownOpen && (
+              <div 
+                className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-2xs lg:hidden"
+                onClick={() => setIsGroupDropdownOpen(false)}
+              >
                 <div 
-                  className="absolute left-0 mt-1.5 w-72 sm:w-80 bg-white rounded-xl shadow-xl border border-slate-200 z-50 overflow-hidden"
+                  className="w-full max-w-sm bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[80vh]"
+                  onClick={(e) => e.stopPropagation()}
                   role="listbox"
                 >
-                  {/* Header */}
-                  <div className="flex items-center justify-between px-3.5 py-2.5 bg-slate-50 border-b border-slate-100">
-                    <div className="flex items-center gap-1.5">
-                      <Layers className="h-3.5 w-3.5 text-indigo-600" />
-                      <span className="text-xs font-bold text-slate-800">Grupos de Estoque</span>
-                      <span className="text-[10px] font-semibold text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded-full">
+                  <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <Building className="h-4 w-4 text-indigo-600" />
+                      <span className="text-sm font-bold text-slate-800">Filtrar Depósitos</span>
+                      <span className="text-[11px] font-semibold text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full">
                         {isAllGroupsSelected ? activeGroups.length : selectedGroups.length}/{activeGroups.length}
                       </span>
                     </div>
-
                     <button
                       type="button"
                       onClick={handleSelectAllGroups}
-                      className={`text-[11px] font-semibold px-2 py-0.5 rounded transition-colors ${
+                      className={`text-xs font-semibold px-2.5 py-1 rounded transition-colors ${
                         isAllGroupsSelected 
                           ? 'bg-indigo-100 text-indigo-700 font-bold' 
                           : 'text-slate-600 hover:bg-slate-200'
@@ -1875,8 +2013,7 @@ export default function StockTable({
                     </button>
                   </div>
 
-                  {/* List of Groups with checkboxes */}
-                  <div className="p-1.5 max-h-64 overflow-y-auto divide-y divide-slate-50">
+                  <div className="p-2 overflow-y-auto divide-y divide-slate-50 flex-1">
                     {activeGroups.map(grp => {
                       const selected = isGroupSelected(grp);
                       const totalVal = groupTotals[grp] || 0;
@@ -1885,21 +2022,21 @@ export default function StockTable({
                         <div
                           key={grp}
                           onClick={() => handleToggleGroup(grp)}
-                          className={`flex items-center justify-between px-2.5 py-2 rounded-lg text-xs cursor-pointer transition-colors group select-none ${
+                          className={`flex items-center justify-between px-3 py-2.5 rounded-xl text-xs cursor-pointer transition-colors select-none ${
                             selected 
-                              ? 'bg-indigo-50/70 hover:bg-indigo-100/70 text-indigo-950 font-medium' 
-                              : 'text-slate-600 hover:bg-slate-100/70'
+                              ? 'bg-indigo-50/80 text-indigo-950 font-semibold' 
+                              : 'text-slate-600 hover:bg-slate-50'
                           }`}
                         >
                           <div className="flex items-center gap-2.5 min-w-0 pr-2">
                             <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
                               selected 
                                 ? 'bg-indigo-600 border-indigo-600 text-white' 
-                                : 'border-slate-300 bg-white group-hover:border-slate-400'
+                                : 'border-slate-300 bg-white'
                             }`}>
                               {selected && <Check className="h-3 w-3 stroke-[3]" />}
                             </div>
-                            <span className="truncate text-xs font-semibold">{grp}</span>
+                            <span className="truncate text-xs">{grp}</span>
                           </div>
 
                           <div className="flex items-center gap-1.5 shrink-0">
@@ -1911,7 +2048,7 @@ export default function StockTable({
                             <button
                               type="button"
                               onClick={(e) => handleSelectOnlyGroup(grp, e)}
-                              className="text-[10px] font-medium text-slate-400 hover:text-indigo-600 hover:bg-indigo-100 px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                              className="text-[10px] font-medium text-slate-400 hover:text-indigo-600 hover:bg-indigo-100 px-1.5 py-0.5 rounded transition-colors"
                               title={`Filtrar apenas o grupo ${grp}`}
                             >
                               Só este
@@ -1922,187 +2059,362 @@ export default function StockTable({
                     })}
                   </div>
 
-                  {/* Footer */}
-                  <div className="flex items-center justify-between px-3 py-2 bg-slate-50 border-t border-slate-100 text-[11px]">
+                  <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border-t border-slate-100 text-xs">
                     <span className="text-slate-500">
                       {isAllGroupsSelected 
                         ? 'Exibindo todos os grupos' 
-                        : `${selectedGroups.length} grupo(s) selecionado(s)`}
+                        : `${selectedGroups.length} selecionado(s)`}
                     </span>
                     <button
                       type="button"
                       onClick={() => setIsGroupDropdownOpen(false)}
-                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md shadow-2xs transition-colors cursor-pointer"
+                      className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
                     >
                       Concluir
                     </button>
                   </div>
                 </div>
-              )}
-            </div>
-
-            {/* Filter by Open Orders Chip */}
-            <button
-              type="button"
-              onClick={() => setFilterOnlyWithOpenOrders(!filterOnlyWithOpenOrders)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
-                filterOnlyWithOpenOrders
-                  ? 'bg-amber-100 text-amber-950 border-amber-300 shadow-2xs ring-1 ring-amber-400/50'
-                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
-              }`}
-              title="Filtrar somente produtos que possuem pedidos em aberto (a sair)"
-            >
-              <Truck className={`h-3.5 w-3.5 ${filterOnlyWithOpenOrders ? 'text-amber-700' : 'text-slate-400'}`} />
-              <span>Apenas com Pedidos a Sair</span>
-              {totalProductsWithOrdersCount > 0 && (
-                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                  filterOnlyWithOpenOrders ? 'bg-amber-200 text-amber-900' : 'bg-slate-100 text-slate-600'
-                }`}>
-                  {totalProductsWithOrdersCount}
-                </span>
-              )}
-            </button>
-
-            {/* Flag / Toggle: Estoque Projetado (Disponível) vs Estoque Real (Físico) */}
-            <button
-              id="btn-toggle-projected-stock"
-              type="button"
-              onClick={handleToggleProjectedStock}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
-                showProjectedStock
-                  ? 'bg-emerald-100 text-emerald-950 border-emerald-300 shadow-2xs ring-1 ring-emerald-400/50'
-                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
-              }`}
-              title={
-                showProjectedStock
-                  ? 'Exibindo Estoque Projetado: Quantidade Disponível deduzindo pedidos em aberto (Saldo - Pedidos). Clique para alternar para o Estoque Real (Físico em Depósito).'
-                  : 'Exibindo Estoque Real: Saldo físico em depósito sem deduzir pedidos em aberto. Clique para alternar para o Estoque Projetado (Disponível deduzindo pedidos).'
-              }
-            >
-              <Layers className={`h-3.5 w-3.5 ${showProjectedStock ? 'text-emerald-700' : 'text-slate-400'}`} />
-              <span>{showProjectedStock ? 'Estoque Projetado' : 'Estoque Real'}</span>
-              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                showProjectedStock ? 'bg-emerald-200 text-emerald-900' : 'bg-slate-100 text-slate-600'
-              }`}>
-                {showProjectedStock ? 'Disponível' : 'Físico'}
-              </span>
-            </button>
+              </div>
+            )}
           </div>
 
-          {/* Add/Manage Buttons */}
-          <div className="flex flex-wrap items-center gap-2">
-            {isMasterOrAdmin && (
-              <button
-                id="btn-warehouse-management"
-                onClick={() => setIsWhManagementOpen(true)}
-                className="flex items-center justify-center gap-2 border border-slate-300 hover:bg-slate-50 text-slate-700 px-3.5 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer"
-                title="Visualizar ou pré-cadastrar depósitos do sistema"
-              >
-                <Building className="h-4 w-4 text-slate-500" />
-                <span>Cadastro</span>
-              </button>
-            )}
-            
-            {/* Botão Ajustar ao Monitor / Altura da Tela */}
-            <button
-              id="btn-toggle-fit-screen"
-              type="button"
-              onClick={handleToggleFitToScreen}
-              className={`flex items-center justify-center gap-2 border px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer shadow-2xs ${
-                fitToScreen 
-                  ? 'bg-indigo-50 border-indigo-300 text-indigo-800 hover:bg-indigo-100' 
-                  : 'border-slate-300 bg-white hover:bg-slate-50 text-slate-700 hover:border-slate-400'
-              }`}
-              title={
-                fitToScreen
-                  ? 'Modo Monitor Ativo: Tabela com altura ajustada ao monitor, cabeçalho fixo e rolagem horizontal sempre visível sem precisar descer até o final dos itens. Clique para alternar para modo contínuo.'
-                  : 'Modo Contínuo: Tabela expandida em altura natural da página. Clique para fixar a altura ao monitor e manter a rolagem horizontal sempre visível.'
-              }
-            >
-              <Monitor className={`h-4 w-4 ${fitToScreen ? 'text-indigo-600' : 'text-slate-500'}`} />
-              <span className="hidden sm:inline">
-                {fitToScreen ? 'Ajustado ao Monitor' : 'Ajustar ao Monitor'}
-              </span>
-            </button>
+          {/* DESKTOP TOOLBAR - Grade Tradicional de Grande Formato */}
+          <div className="hidden lg:flex lg:items-center justify-between gap-3">
+            {/* Warehouse Dropdown Filter & Open Orders Filter */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* Multiple Groups Selection Dropdown */}
+              <div className="relative" ref={groupDropdownRef}>
+                <button
+                  id="select-group-filter"
+                  type="button"
+                  onClick={() => setIsGroupDropdownOpen(prev => !prev)}
+                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer shadow-2xs select-none ${
+                    !isAllGroupsSelected
+                      ? 'bg-indigo-50 text-indigo-950 border-indigo-300 ring-1 ring-indigo-400/40'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50 hover:border-slate-400'
+                  }`}
+                  title="Filtrar e mesclar grupos de depósitos para visualização na tabela"
+                  aria-expanded={isGroupDropdownOpen}
+                  aria-haspopup="listbox"
+                >
+                  <Building className={`h-3.5 w-3.5 ${!isAllGroupsSelected ? 'text-indigo-600' : 'text-slate-500'}`} />
+                  
+                  <span className="font-medium">
+                    {isAllGroupsSelected ? (
+                      `Todos os Grupos (${activeGroups.length})`
+                    ) : selectedGroups.length === 1 ? (
+                      `Grupo: ${selectedGroups[0]}`
+                    ) : (
+                      `Grupos (${selectedGroups.length}): ${selectedGroups.join(', ')}`
+                    )}
+                  </span>
 
-            {/* Botão Atualizar visível para todos os usuários */}
-            <button
-              id="btn-update-stock"
-              onClick={handleExecuteUpdate}
-              disabled={isUpdating}
-              className={`flex items-center justify-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg shadow-sm transition-all cursor-pointer border ${
-                isUpdating 
-                  ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
-                  : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500 hover:shadow-indigo-500/10'
-              }`}
-              title="Apagar dados locais e atualizar importando os dados reais através do Webhook configurado"
-            >
-              {isUpdating ? (
-                <>
-                  <svg className="animate-spin h-4 w-4 text-emerald-600" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  <span>Atualizando...</span>
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="h-4 w-4" />
-                  <span>Atualizar</span>
-                </>
+                  {!isAllGroupsSelected && (
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSelectAllGroups();
+                      }}
+                      title="Limpar filtro e ver todos os grupos"
+                      className="p-0.5 rounded-full hover:bg-indigo-200 text-indigo-700 transition-colors"
+                    >
+                      <X className="h-3 w-3" />
+                    </span>
+                  )}
+
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${
+                    isGroupDropdownOpen ? 'rotate-180 text-indigo-600' : 'text-slate-400'
+                  }`} />
+                </button>
+
+                {/* Popover Dropdown Menu Desktop */}
+                {isGroupDropdownOpen && (
+                  <div 
+                    className="absolute left-0 mt-1.5 w-72 sm:w-80 bg-white rounded-xl shadow-xl border border-slate-200 z-50 overflow-hidden"
+                    role="listbox"
+                  >
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-3.5 py-2.5 bg-slate-50 border-b border-slate-100">
+                      <div className="flex items-center gap-1.5">
+                        <Layers className="h-3.5 w-3.5 text-indigo-600" />
+                        <span className="text-xs font-bold text-slate-800">Grupos de Estoque</span>
+                        <span className="text-[10px] font-semibold text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded-full">
+                          {isAllGroupsSelected ? activeGroups.length : selectedGroups.length}/{activeGroups.length}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleSelectAllGroups}
+                        className={`text-[11px] font-semibold px-2 py-0.5 rounded transition-colors ${
+                          isAllGroupsSelected 
+                            ? 'bg-indigo-100 text-indigo-700 font-bold' 
+                            : 'text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        Todos
+                      </button>
+                    </div>
+
+                    {/* List of Groups with checkboxes */}
+                    <div className="p-1.5 max-h-64 overflow-y-auto divide-y divide-slate-50">
+                      {activeGroups.map(grp => {
+                        const selected = isGroupSelected(grp);
+                        const totalVal = groupTotals[grp] || 0;
+
+                        return (
+                          <div
+                            key={grp}
+                            onClick={() => handleToggleGroup(grp)}
+                            className={`flex items-center justify-between px-2.5 py-2 rounded-lg text-xs cursor-pointer transition-colors group select-none ${
+                              selected 
+                                ? 'bg-indigo-50/70 hover:bg-indigo-100/70 text-indigo-950 font-medium' 
+                                : 'text-slate-600 hover:bg-slate-100/70'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                              <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                                selected 
+                                  ? 'bg-indigo-600 border-indigo-600 text-white' 
+                                  : 'border-slate-300 bg-white group-hover:border-slate-400'
+                              }`}>
+                                {selected && <Check className="h-3 w-3 stroke-[3]" />}
+                              </div>
+                              <span className="truncate text-xs font-semibold">{grp}</span>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {totalVal > 0 && (
+                                <span className="text-[10px] font-mono font-medium text-slate-500">
+                                  $ {totalVal.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={(e) => handleSelectOnlyGroup(grp, e)}
+                                className="text-[10px] font-medium text-slate-400 hover:text-indigo-600 hover:bg-indigo-100 px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                title={`Filtrar apenas o grupo ${grp}`}
+                              >
+                                Só este
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Footer */}
+                    <div className="flex items-center justify-between px-3 py-2 bg-slate-50 border-t border-slate-100 text-[11px]">
+                      <span className="text-slate-500">
+                        {isAllGroupsSelected 
+                          ? 'Exibindo todos os grupos' 
+                          : `${selectedGroups.length} grupo(s) selecionado(s)`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsGroupDropdownOpen(false)}
+                        className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md shadow-2xs transition-colors cursor-pointer"
+                      >
+                        Concluir
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Filter by Open Orders Chip */}
+              <button
+                type="button"
+                onClick={() => setFilterOnlyWithOpenOrders(!filterOnlyWithOpenOrders)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                  filterOnlyWithOpenOrders
+                    ? 'bg-amber-100 text-amber-950 border-amber-300 shadow-2xs ring-1 ring-amber-400/50'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
+                }`}
+                title="Filtrar somente produtos que possuem pedidos em aberto (a sair)"
+              >
+                <Truck className={`h-3.5 w-3.5 ${filterOnlyWithOpenOrders ? 'text-amber-700' : 'text-slate-400'}`} />
+                <span>Apenas com Pedidos a Sair</span>
+                {totalProductsWithOrdersCount > 0 && (
+                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                    filterOnlyWithOpenOrders ? 'bg-amber-200 text-amber-900' : 'bg-slate-100 text-slate-600'
+                  }`}>
+                    {totalProductsWithOrdersCount}
+                  </span>
+                )}
+              </button>
+
+              {/* Flag / Toggle: Estoque Projetado (Disponível) vs Estoque Real (Físico) */}
+              <button
+                id="btn-toggle-projected-stock"
+                type="button"
+                onClick={handleToggleProjectedStock}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                  showProjectedStock
+                    ? 'bg-emerald-100 text-emerald-950 border-emerald-300 shadow-2xs ring-1 ring-emerald-400/50'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
+                }`}
+                title={
+                  showProjectedStock
+                    ? 'Exibindo Estoque Projetado: Quantidade Disponível deduzindo pedidos em aberto (Saldo - Pedidos). Clique para alternar para o Estoque Real (Físico em Depósito).'
+                    : 'Exibindo Estoque Real: Saldo físico em depósito sem deduzir pedidos em aberto. Clique para alternar para o Estoque Projetado (Disponível deduzindo pedidos).'
+                }
+              >
+                <Layers className={`h-3.5 w-3.5 ${showProjectedStock ? 'text-emerald-700' : 'text-slate-400'}`} />
+                <span>{showProjectedStock ? 'Estoque Projetado' : 'Estoque Real'}</span>
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                  showProjectedStock ? 'bg-emerald-200 text-emerald-900' : 'bg-slate-100 text-slate-600'
+                }`}>
+                  {showProjectedStock ? 'Disponível' : 'Físico'}
+                </span>
+              </button>
+            </div>
+
+            {/* Add/Manage Buttons Desktop */}
+            <div className="flex flex-wrap items-center gap-2">
+              {isMasterOrAdmin && (
+                <button
+                  id="btn-warehouse-management"
+                  onClick={() => setIsWhManagementOpen(true)}
+                  className="flex items-center justify-center gap-2 border border-slate-300 hover:bg-slate-50 text-slate-700 px-3.5 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer"
+                  title="Visualizar ou pré-cadastrar depósitos do sistema"
+                >
+                  <Building className="h-4 w-4 text-slate-500" />
+                  <span>Cadastro</span>
+                </button>
               )}
-            </button>
+              
+              {/* Botão Seletor de Modo Cards / Tabela */}
+              <div className="inline-flex rounded-lg border border-slate-300 p-0.5 bg-slate-100 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => handleSetDisplayPreference('cards')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                    activeDisplayMode === 'cards'
+                      ? 'bg-white text-indigo-700 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Modo Cards: Otimizado para celular e telas menores com cartões táteis e navegação ágil"
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                  <span>Cards</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetDisplayPreference('table')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                    activeDisplayMode === 'table'
+                      ? 'bg-white text-indigo-700 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Modo Tabela: Grade tabular tradicional completa com colunas lado a lado"
+                >
+                  <Table className="h-3.5 w-3.5" />
+                  <span>Tabela</span>
+                </button>
+              </div>
 
-            {/* Botão Exporta visível para todos os usuários */}
-            <button
-              id="btn-export-stock-excel"
-              onClick={handleExportExcel}
-              disabled={isExporting || (viewMode === 'consolidated' ? groupedStock.length === 0 : filteredStock.length === 0)}
-              className={`flex items-center justify-center gap-2 border border-slate-300 hover:bg-slate-50 text-slate-700 px-3.5 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer shadow-2xs hover:border-slate-400 ${
-                (viewMode === 'consolidated' ? groupedStock.length === 0 : filteredStock.length === 0)
-                  ? 'opacity-50 cursor-not-allowed'
-                  : ''
-              }`}
-              title={
-                selectedWarehouseFilter !== 'Todos'
-                  ? `Exportar para Excel (.xlsx) exatamente os dados filtrados do grupo "${selectedWarehouseFilter}"`
-                  : 'Exportar para Excel (.xlsx) exatamente os dados filtrados na grid'
-              }
-            >
-              {isExporting ? (
-                <>
-                  <RefreshCw className="h-4 w-4 animate-spin text-emerald-600" />
-                  <span>Exportando...</span>
-                </>
-              ) : (
-                <>
-                  <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
-                  <span>Exporta</span>
-                </>
+              {/* Botão Ajustar ao Monitor / Altura da Tela */}
+              <button
+                id="btn-toggle-fit-screen"
+                type="button"
+                onClick={handleToggleFitToScreen}
+                className={`flex items-center justify-center gap-2 border px-3.5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer shadow-2xs ${
+                  fitToScreen 
+                    ? 'bg-indigo-50 border-indigo-300 text-indigo-800 hover:bg-indigo-100' 
+                    : 'border-slate-300 bg-white hover:bg-slate-50 text-slate-700 hover:border-slate-400'
+                }`}
+                title={
+                  fitToScreen
+                    ? 'Modo Monitor Ativo: Tabela com altura ajustada ao monitor, cabeçalho fixo e rolagem horizontal sempre visível sem precisar descer até o final dos itens. Clique para alternar para modo contínuo.'
+                    : 'Modo Contínuo: Tabela expandida em altura natural da página. Clique para fixar a altura ao monitor e manter a rolagem horizontal sempre visível.'
+                }
+              >
+                <Monitor className={`h-4 w-4 ${fitToScreen ? 'text-indigo-600' : 'text-slate-500'}`} />
+                <span className="hidden sm:inline">
+                  {fitToScreen ? 'Ajustado ao Monitor' : 'Ajustar ao Monitor'}
+                </span>
+              </button>
+
+              {/* Botão Atualizar visível para todos os usuários */}
+              <button
+                id="btn-update-stock"
+                onClick={handleExecuteUpdate}
+                disabled={isUpdating}
+                className={`flex items-center justify-center gap-2 px-3.5 py-2 text-sm font-semibold rounded-lg shadow-sm transition-all cursor-pointer border ${
+                  isUpdating 
+                    ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                    : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500 hover:shadow-indigo-500/10'
+                }`}
+                title="Apagar dados locais e atualizar importando os dados reais através do Webhook configurado"
+              >
+                {isUpdating ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4 text-emerald-600" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <span>Atualizando...</span>
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-4 w-4" />
+                    <span>Atualizar</span>
+                  </>
+                )}
+              </button>
+
+              {/* Botão Exporta visível para todos os usuários */}
+              <button
+                id="btn-export-stock-excel"
+                onClick={handleExportExcel}
+                disabled={isExporting || (viewMode === 'consolidated' ? groupedStock.length === 0 : filteredStock.length === 0)}
+                className={`flex items-center justify-center gap-2 border border-slate-300 hover:bg-slate-50 text-slate-700 px-3.5 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer shadow-2xs hover:border-slate-400 ${
+                  (viewMode === 'consolidated' ? groupedStock.length === 0 : filteredStock.length === 0)
+                    ? 'opacity-50 cursor-not-allowed'
+                    : ''
+                }`}
+                title={
+                  selectedWarehouseFilter !== 'Todos'
+                    ? `Exportar para Excel (.xlsx) exatamente os dados filtrados do grupo "${selectedWarehouseFilter}"`
+                    : 'Exportar para Excel (.xlsx) exatamente os dados filtrados na grid'
+                }
+              >
+                {isExporting ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin text-emerald-600" />
+                    <span>Exportando...</span>
+                  </>
+                ) : (
+                  <>
+                    <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+                    <span>Exporta</span>
+                  </>
+                )}
+              </button>
+
+              {isMasterOrAdmin && stock.length > 0 && (
+                <button
+                  id="btn-clear-all-stock"
+                  onClick={() => setIsClearAllConfirmOpen(true)}
+                  className="flex items-center justify-center gap-2 border border-rose-200 text-rose-700 hover:bg-rose-50 px-3.5 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer"
+                  title="Excluir todos os saldos de estoque do sistema"
+                >
+                  <Trash2 className="h-4 w-4 text-rose-500" />
+                  <span>Excluir</span>
+                </button>
               )}
-            </button>
-
-            {isMasterOrAdmin && stock.length > 0 && (
-              <button
-                id="btn-clear-all-stock"
-                onClick={() => setIsClearAllConfirmOpen(true)}
-                className="flex items-center justify-center gap-2 border border-rose-200 text-rose-700 hover:bg-rose-50 px-3.5 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer"
-                title="Excluir todos os saldos de estoque do sistema"
-              >
-                <Trash2 className="h-4 w-4 text-rose-500" />
-                <span>Excluir</span>
-              </button>
-            )}
-            {isMasterOrAdmin && (
-              <button
-                id="btn-add-stock-balance"
-                onClick={handleOpenAddModal}
-                className="flex items-center justify-center gap-2 bg-indigo-600 text-white hover:bg-indigo-700 px-3.5 py-2 text-sm font-semibold rounded-lg shadow-sm transition-colors cursor-pointer"
-              >
-                <Plus className="h-4 w-4" />
-                Lançar
-              </button>
-            )}
+              {isMasterOrAdmin && (
+                <button
+                  id="btn-add-stock-balance"
+                  onClick={handleOpenAddModal}
+                  className="flex items-center justify-center gap-2 bg-indigo-600 text-white hover:bg-indigo-700 px-3.5 py-2 text-sm font-semibold rounded-lg shadow-sm transition-colors cursor-pointer"
+                >
+                  <Plus className="h-4 w-4" />
+                  Lançar
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -2142,7 +2454,7 @@ export default function StockTable({
       )}
 
       {/* Top synchronized horizontal scrollbar when table content overflows */}
-      {hasHorizontalOverflow && (
+      {hasHorizontalOverflow && activeDisplayMode === 'table' && (
         <div 
           ref={topScrollRef} 
           onScroll={handleTopScroll}
@@ -2160,13 +2472,25 @@ export default function StockTable({
         </div>
       )}
 
-      {/* Main Stock Table */}
-      <div className={`bg-white ${hasHorizontalOverflow ? 'rounded-b-xl border-t-0' : 'rounded-xl'} border border-slate-200 shadow-xs overflow-hidden`}>
-        <div 
-          ref={tableContainerRef}
-          onScroll={handleTableScroll}
-          className={`overflow-x-auto ${fitToScreen ? 'overflow-y-auto max-h-[calc(100vh-270px)] min-h-[420px]' : ''}`}
-        >
+      {/* Main Stock Content: Mobile Cards or Traditional Table */}
+      {activeDisplayMode === 'cards' && viewMode === 'consolidated' ? (
+        <StockMobileCards
+          groupedStock={groupedStock}
+          displayedGroups={displayedGroups}
+          groupTotals={groupTotals}
+          showProjectedStock={showProjectedStock}
+          getProjectedStockQty={getProjectedStockQty}
+          getProductOrdersSummary={getProductOrdersSummary}
+          onOpenBatchModal={handleOpenBatchModal}
+          onOpenOrdersModal={handleOpenOrdersModal}
+        />
+      ) : (
+        <div className={`bg-white ${hasHorizontalOverflow ? 'rounded-b-xl border-t-0' : 'rounded-xl'} border border-slate-200 shadow-xs overflow-hidden`}>
+          <div 
+            ref={tableContainerRef}
+            onScroll={handleTableScroll}
+            className={`overflow-x-auto ${fitToScreen ? 'overflow-y-auto max-h-[calc(100vh-270px)] min-h-[420px]' : ''}`}
+          >
           {(viewMode === 'consolidated' ? groupedStock.length === 0 : filteredStock.length === 0) ? (
             <div className="text-center py-12 text-slate-400">
               <Package className="h-12 w-12 text-slate-300 mx-auto mb-3" />
@@ -2651,6 +2975,7 @@ export default function StockTable({
           )}
         </div>
       </div>
+      )}
 
       {/* MODAL - CADASTRO E EDIÇÃO DE SALDO */}
       {isModalOpen && (

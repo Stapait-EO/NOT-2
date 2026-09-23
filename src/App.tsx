@@ -56,6 +56,8 @@ import Migration from './components/Migration';
 import SSOGuard from './components/SSOGuard';
 import { AutoSyncNotification, AutoSyncState } from './components/AutoSyncNotification';
 import { executeAutomaticWebhooks } from './utils/webhookSync';
+import { useIsMobile } from './hooks/useIsMobile';
+import { MobileNavigation } from './components/MobileNavigation';
 
 export default function App() {
   return (
@@ -66,6 +68,9 @@ export default function App() {
 }
 
 function MainApplication({ initialUser }: { initialUser: UserAccount }) {
+  // Mobile / Responsive detection
+  const { isMobile, layoutOverride, setLayoutPreference } = useIsMobile();
+
   // Current authenticated user (validated from Portal MiFire SSO)
   const [currentUser, setCurrentUser] = useState<UserAccount>(initialUser);
   const [isSSOConnected, setIsSSOConnected] = useState<boolean>(true);
@@ -788,10 +793,10 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
       {/* Premium Header Bar in #0c396b Deep Navy Tone */}
       <header className="bg-[#0c396b] text-white shrink-0 shadow-md border-b border-[#082b52]">
         <div className={`mx-auto px-4 sm:px-6 lg:px-8 ${activeTab === 'stock' || activeTab === 'sales' ? 'max-w-[99vw]' : 'max-w-7xl'}`}>
-          <div className="flex items-center justify-between h-16">
+          <div className="flex items-center justify-between h-14 md:h-16">
             
-            {/* Main Tabs Navigation */}
-            <nav className="flex space-x-1 items-center">
+            {/* Desktop Tabs Navigation (Hidden on Mobile) */}
+            <nav className="hidden md:flex space-x-1 items-center">
               <button
                 id="nav-tab-stock"
                 onClick={() => setActiveTab('stock')}
@@ -903,6 +908,56 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
               </div>
             </nav>
 
+            {/* Mobile Header Bar (Visible on Mobile only) */}
+            <div className="flex md:hidden items-center justify-between w-full">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-black/25 border border-white/20 flex items-center justify-center text-blue-200 shrink-0">
+                  {activeTab === 'stock' && <Building className="h-4 w-4" />}
+                  {activeTab === 'sales' && <TrendingUp className="h-4 w-4" />}
+                  {activeTab === 'dashboard' && <Layers className="h-4 w-4" />}
+                  {activeTab === 'orders' && <FileText className="h-4 w-4" />}
+                  {activeTab === 'products' && <Archive className="h-4 w-4" />}
+                  {activeTab === 'webhook' && <Globe className="h-4 w-4" />}
+                  {activeTab === 'migration' && <DownloadCloud className="h-4 w-4" />}
+                </div>
+
+                <div className="min-w-0">
+                  <span className="text-[10px] text-blue-200/80 font-bold uppercase tracking-wider block leading-none">
+                    Notifier Estoque
+                  </span>
+                  <span className="text-sm font-bold text-white truncate block mt-0.5">
+                    {activeTab === 'stock' && 'Análise de Estoque'}
+                    {activeTab === 'sales' && 'Análise de Consumo'}
+                    {activeTab === 'dashboard' && 'Painel Analítico'}
+                    {activeTab === 'orders' && 'Pedidos em Aberto'}
+                    {activeTab === 'products' && 'Produtos'}
+                    {activeTab === 'webhook' && 'Webhooks'}
+                    {activeTab === 'migration' && 'Migrar / Backup'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Mobile Right Controls: User info & SSO Logout */}
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setLayoutPreference(layoutOverride === 'desktop' ? 'mobile' : 'desktop')}
+                  className="px-2 py-1 text-[11px] font-semibold rounded-md bg-white/10 text-blue-100 hover:text-white transition-colors"
+                  title="Alternar entre modo Desktop e Mobile"
+                >
+                  {layoutOverride === 'desktop' ? 'Modo Mobile' : 'Ver Desktop'}
+                </button>
+
+                <button
+                  onClick={logoutSSO}
+                  title="Voltar ao Portal SSO"
+                  className="p-1.5 text-blue-200 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                >
+                  <LogOut className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
           </div>
         </div>
       </header>
@@ -972,7 +1027,7 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
       )}
 
       {/* Main Content Area */}
-      <main className={`flex-1 w-full mx-auto py-5 ${
+      <main className={`flex-1 w-full mx-auto py-5 pb-24 md:pb-6 ${
         activeTab === 'stock' || activeTab === 'sales' 
           ? 'max-w-[99vw] px-2 sm:px-4 lg:px-6' 
           : 'max-w-7xl px-4 sm:px-6 lg:px-8'
@@ -1102,6 +1157,18 @@ function MainApplication({ initialUser }: { initialUser: UserAccount }) {
       <footer className="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-400 shrink-0">
         <p>Gerenciador de Expedição • Integrado ao Portal Central SSO • {new Date().getFullYear()}</p>
       </footer>
+
+      {/* Responsive Mobile Bottom Navigation & Drawer */}
+      <MobileNavigation
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        ordersCount={orders.length}
+        currentUser={currentUser}
+        isMasterOrAdmin={isMasterOrAdmin}
+        logoutSSO={logoutSSO}
+        layoutOverride={layoutOverride}
+        setLayoutPreference={setLayoutPreference}
+      />
 
     </div>
   );
